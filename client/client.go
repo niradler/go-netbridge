@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -16,16 +17,18 @@ import (
 	"github.com/niradler/go-netbridge/tunnel"
 )
 
+const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
+
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  maxMessageSize,
+	WriteBufferSize: maxMessageSize,
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
 }
 
 var conn *websocket.Conn
-var responseChan = make(chan messages.Message)
+var responseChan = make(chan messages.HttpResponseMessage)
 
 func main() {
 	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: "/ws"}
@@ -43,14 +46,13 @@ func main() {
 		defer wg.Done()
 		for {
 			msg, err := messages.ReadAndParseMessage(conn)
-			fmt.Printf("Received message: %+v\n", msg)
+			fmt.Printf("Received message: Type=%s, ID=%s, Total=%d, Chunk=%d, Response=%t\n", msg.Type, msg.ID, msg.Total, msg.Chunk, msg.Response)
 			if err != nil {
 				log.Printf("Error reading message: %v", err)
 				break
 			}
 			if msg.Type == messages.MessageType.Response {
-				fmt.Printf("Received response: %+v\n", msg.Response)
-				responseChan <- msg
+				responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
 			} else {
 				err = messages.MessageHandler(conn, msg)
 				if err != nil {
@@ -69,6 +71,7 @@ func main() {
 		Params: messages.PingMessage{
 			Body: "ping",
 		},
+		Response: false,
 	})
 
 	if err != nil {
@@ -91,6 +94,8 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg.ID = messages.CreateId()
+	msg.Type = messages.MessageType.Request
+	msg.Response = false
 	err := conn.WriteJSON(msg)
 	if err != nil {
 		log.Printf("Error writing message: %v", err)
@@ -99,10 +104,27 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	select {
-	case responseMsg := <-responseChan:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(responseMsg.Response)
+	case responseParams := <-responseChan:
+
+		for key, value := range responseParams.Headers {
+			w.Header().Set(key, value)
+		}
+		w.WriteHeader(responseParams.StatusCode)
+		w.Write([]byte(responseParams.Body))
+
 	case <-r.Context().Done():
 		http.Error(w, "Request timed out", http.StatusGatewayTimeout)
+	}
+}
+
+func printParamsType(params interface{}) {
+	v := reflect.ValueOf(params)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		fmt.Printf("Field %s: %s\n", t.Field(i).Name, field.Type())
 	}
 }

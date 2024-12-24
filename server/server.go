@@ -38,7 +38,7 @@ func main() {
 					break
 				}
 				if msg.Type == messages.MessageType.Response {
-					fmt.Printf("Received response: %+v\n", msg.Response)
+					fmt.Printf("Received response: %+v\n", msg)
 				} else {
 					err = messages.MessageHandler(conn, msg)
 					if err != nil {

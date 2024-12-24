@@ -4,31 +4,35 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/valyala/fasthttp"
 )
 
 var MessageType = struct {
 	Response string
 	Ping     string
-	Http     string
+	Request  string
 	Error    string
 }{
-	Response: "response",
 	Ping:     "ping",
-	Http:     "http",
+	Request:  "request",
+	Response: "response",
 	Error:    "error",
 }
 
-type HttpMessage struct {
+type HttpRequestMessage struct {
 	Method  string            `json:"method"`
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body"`
+}
+
+type HttpResponseMessage struct {
+	StatusCode int               `json:"statusCode"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
 }
 
 type PingMessage struct {
@@ -45,7 +49,7 @@ type Message struct {
 	Params   interface{} `json:"params"`
 	Chunk    int         `json:"chunk"`
 	Total    int         `json:"total"`
-	Response interface{} `json:"response,omitempty"`
+	Response bool        `json:"response,omitempty"`
 	ID       string      `json:"id"`
 }
 
@@ -71,16 +75,16 @@ func ReadAndParseMessage(conn *websocket.Conn) (Message, error) {
 	}
 
 	switch msg.Type {
-	case "response":
-		var resMsg Message
-		return parseMessage(msg, &resMsg)
-	case "ping":
+	case MessageType.Ping:
 		var pingMsg PingMessage
 		return parseMessage(msg, &pingMsg)
-	case "http":
-		var httpMsg HttpMessage
+	case MessageType.Request:
+		var httpMsg HttpRequestMessage
 		return parseMessage(msg, &httpMsg)
-	case "error":
+	case MessageType.Response:
+		var resMsg HttpResponseMessage
+		return parseMessage(msg, &resMsg)
+	case MessageType.Error:
 		var errorMsg ErrorMessage
 		return parseMessage(msg, &errorMsg)
 	default:
@@ -109,39 +113,48 @@ func MessageHandler(conn *websocket.Conn, msg Message) error {
 	case MessageType.Ping:
 		pingMsg := msg.Params.(*PingMessage)
 		if pingMsg.Body == "ping" {
-			msg.Response = "pong"
 			err := conn.WriteJSON(Message{
-				Type:     MessageType.Response,
-				Params:   pingMsg,
-				Response: msg.Response,
+				Type: MessageType.Ping,
+				Params: PingMessage{
+					Body: "pong",
+				},
+				Response: true,
 				ID:       msg.ID,
 			})
 			if err != nil {
 				return err
 			}
 		}
-	case MessageType.Http:
-		httpMsg := msg.Params.(*HttpMessage)
-		client := &http.Client{}
-		req, err := http.NewRequest(httpMsg.Method, httpMsg.URL, strings.NewReader(httpMsg.Body))
-		if err != nil {
-			return err
-		}
+	case MessageType.Request:
+		httpMsg := msg.Params.(*HttpRequestMessage)
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		resp := fasthttp.AcquireResponse()
+		defer fasthttp.ReleaseResponse(resp)
+
+		req.SetRequestURI(httpMsg.URL)
+		req.Header.SetMethod(httpMsg.Method)
 		for key, value := range httpMsg.Headers {
-			req.Header.Add(key, value)
+			req.Header.Set(key, value)
 		}
-		resp, err := client.Do(req)
+		req.SetBodyString(httpMsg.Body)
+
+		client := &fasthttp.Client{}
+		err := client.Do(req, resp)
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		msg.Response = string(body)
+
+		body := string(resp.Body())
+		headers := make(map[string]string)
+		resp.Header.VisitAll(func(key, value []byte) {
+			headers[string(key)] = string(value)
+		})
+
+		msg.Response = true
 		err = conn.WriteJSON(Message{
 			Type:     MessageType.Response,
+			Params:   HttpResponseMessage{StatusCode: resp.StatusCode(), Headers: headers, Body: body},
 			Response: msg.Response,
 			ID:       msg.ID,
 		})
