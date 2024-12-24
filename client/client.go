@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -25,6 +26,16 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+}
+
+func convertHeaders(headers http.Header) map[string]string {
+	converted := make(map[string]string)
+	for key, values := range headers {
+		if len(values) > 0 {
+			converted[key] = values[0]
+		}
+	}
+	return converted
 }
 
 var conn *websocket.Conn
@@ -96,7 +107,20 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	msg.ID = messages.CreateId()
 	msg.Type = messages.MessageType.Request
 	msg.Response = false
-	err := conn.WriteJSON(msg)
+	msg.Total = 1
+	msg.Chunk = 1
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		return
+	}
+	msg.Params = messages.HttpRequestMessage{
+		Method:  r.Method,
+		URL:     "http://localhost:8089",
+		Headers: convertHeaders(r.Header),
+		Body:    string(bodyBytes),
+	}
+	err = conn.WriteJSON(msg)
 	if err != nil {
 		log.Printf("Error writing message: %v", err)
 		http.Error(w, "Failed to send message", http.StatusInternalServerError)
