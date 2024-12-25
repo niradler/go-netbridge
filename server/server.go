@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/niradler/go-netbridge/config"
-	"github.com/niradler/go-netbridge/tools"
+	"github.com/niradler/go-netbridge/shared"
 )
 
 func main() {
@@ -12,8 +12,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg.PORT = "8080"
-	cfg.Type = "server"
-	server := tools.NewServer(cfg)
-	server.Start()
+
+	httpServer := shared.NewHTTPServer(cfg, nil)
+
+	shared.NewWebSocketServer(httpServer)
+
+	log.Fatal(httpServer.Start(":8080"))
 }

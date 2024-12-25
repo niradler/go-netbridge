@@ -110,6 +110,12 @@ func ReadChunks(conn *websocket.Conn, msg Message) ([]Message, error) {
 }
 
 func MessageHandler(conn *websocket.Conn, msg Message) error {
+	if conn == nil {
+		fmt.Println("Connection is not open")
+		return errors.New("connection is not open")
+	} else {
+		fmt.Println("Connection is open")
+	}
 	switch msg.Type {
 	case MessageType.Ping:
 		pingMsg := msg.Params.(*PingMessage)

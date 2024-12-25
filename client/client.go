@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/niradler/go-netbridge/config"
-	"github.com/niradler/go-netbridge/tools"
+	"github.com/niradler/go-netbridge/shared"
 )
 
 func main() {
@@ -12,6 +12,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	server := tools.NewServer(cfg)
-	server.Start()
+	wss, err := shared.NewWebSocketConnection(cfg)
+	if err != nil {
+		log.Fatalf("Error creating WebSocket server: %v", err)
+	}
+	defer wss.Close()
+
+	httpServer := shared.NewHTTPServer(cfg, wss)
+	log.Fatal(httpServer.Start(":8081"))
 }
