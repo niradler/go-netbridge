@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/niradler/go-netbridge/tunnel"
 	"github.com/valyala/fasthttp"
 )
 
@@ -109,11 +110,17 @@ func ReadChunks(conn *websocket.Conn, msg Message) ([]Message, error) {
 }
 
 func MessageHandler(conn *websocket.Conn, msg Message) error {
+	if conn == nil {
+		fmt.Println("Connection is not open")
+		return errors.New("connection is not open")
+	} else {
+		fmt.Println("Connection is open")
+	}
 	switch msg.Type {
 	case MessageType.Ping:
 		pingMsg := msg.Params.(*PingMessage)
 		if pingMsg.Body == "ping" {
-			err := conn.WriteJSON(Message{
+			err := tunnel.WriteJSON(conn, Message{
 				Type: MessageType.Ping,
 				Params: PingMessage{
 					Body: "pong",
@@ -152,7 +159,7 @@ func MessageHandler(conn *websocket.Conn, msg Message) error {
 		})
 
 		msg.Response = true
-		err = conn.WriteJSON(Message{
+		err = tunnel.WriteJSON(conn, Message{
 			Type:     MessageType.Response,
 			Params:   HttpResponseMessage{StatusCode: resp.StatusCode(), Headers: headers, Body: body},
 			Response: msg.Response,
@@ -168,5 +175,6 @@ func MessageHandler(conn *websocket.Conn, msg Message) error {
 }
 
 func CreateId() string {
-	return "msg_id_" + fmt.Sprintf("%d", time.Now().UnixNano())
+	id := fmt.Sprintf("%x", time.Now().UnixNano())
+	return "msg_" + id[:16]
 }

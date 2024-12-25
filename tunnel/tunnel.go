@@ -8,16 +8,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
+
+var Upgrader = websocket.Upgrader{
+	ReadBufferSize:  maxMessageSize,
+	WriteBufferSize: maxMessageSize,
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
 }
 
 func Create(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := Upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Error upgrading connection:", err)
 		return conn, err
@@ -52,7 +54,7 @@ func Receive(conn *websocket.Conn) ([]byte, error) {
 	return msg, err
 }
 
-func SendJSON(conn *websocket.Conn, v interface{}) error {
+func WriteJSON(conn *websocket.Conn, v interface{}) error {
 	err := conn.WriteJSON(v)
 	if err != nil {
 		log.Println("Error sending JSON:", err)
@@ -60,7 +62,7 @@ func SendJSON(conn *websocket.Conn, v interface{}) error {
 	return err
 }
 
-func ReceiveJSON(conn *websocket.Conn, v interface{}) error {
+func ReadJSON(conn *websocket.Conn, v interface{}) error {
 	err := conn.ReadJSON(v)
 	if err != nil {
 		log.Println("Error receiving JSON:", err)
