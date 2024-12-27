@@ -32,6 +32,7 @@ type WebSocketServer struct {
 	responseChan chan messages.HttpResponseMessage
 	messageMutex sync.Mutex
 	messageWG    sync.WaitGroup
+	config       *config.Config
 }
 
 // NewWebSocketServer initializes a WebSocketServer instance.
@@ -40,14 +41,17 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse WebSocket URL: %w", err)
 	}
-	conn, err := tunnel.Connect(*wsURL)
+	conn, err := tunnel.Connect(*wsURL, *cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to WebSocket: %w", err)
 	}
 
+	Ping(conn)
+
 	server := &WebSocketServer{
 		conn:         conn,
 		responseChan: make(chan messages.HttpResponseMessage),
+		config:       cfg,
 	}
 
 	server.messageWG.Add(1)
@@ -68,7 +72,7 @@ func (wss *WebSocketServer) listenForMessages() {
 		if msg.Type == messages.MessageType.Response {
 			wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
 		} else {
-			err = messages.MessageHandler(wss.conn, msg)
+			err = messages.MessageHandler(wss.conn, msg, *wss.config)
 			if err != nil {
 				log.Printf("Error handling message: %v", err)
 				break
@@ -129,7 +133,7 @@ func NewWebSocketServer(hs *HTTPServer) {
 					fmt.Printf("Received response: %+v\n", msg)
 					hs.wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
 				} else {
-					err = messages.MessageHandler(conn, msg)
+					err = messages.MessageHandler(conn, msg, *hs.config)
 					if err != nil {
 						log.Printf("Error handling message: %v", err)
 					}
@@ -146,7 +150,18 @@ func NewWebSocketServer(hs *HTTPServer) {
 func NewHTTPServer(config *config.Config, wss *WebSocketServer) *HTTPServer {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
-
+	if config.SECRET != "" && config.Type != "client" {
+		router.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				authHeader := r.Header.Get("Authorization")
+				if authHeader != config.SECRET {
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
 	hs := &HTTPServer{
 		wss:    wss,
 		router: router,
@@ -159,8 +174,12 @@ func NewHTTPServer(config *config.Config, wss *WebSocketServer) *HTTPServer {
 }
 
 // Start starts the HTTP server on the specified port.
-func (hs *HTTPServer) Start(port string) error {
-	return http.ListenAndServe(port, hs.router)
+func (hs *HTTPServer) Start() error {
+	if hs.config.SSL_CERT_FILE != "" && hs.config.SSL_KEY_FILE != "" {
+		return http.ListenAndServeTLS(":"+hs.config.PORT, hs.config.SSL_CERT_FILE, hs.config.SSL_KEY_FILE, hs.router)
+	}
+
+	return http.ListenAndServe(":"+hs.config.PORT, hs.router)
 }
 
 func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {

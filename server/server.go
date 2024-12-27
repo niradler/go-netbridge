@@ -12,10 +12,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	cfg.PORT = "8080"
+	cfg.Type = "server"
 	httpServer := shared.NewHTTPServer(cfg, nil)
 
 	shared.NewWebSocketServer(httpServer)
 
-	log.Fatal(httpServer.Start(":8080"))
+	log.Fatal(httpServer.Start())
 }

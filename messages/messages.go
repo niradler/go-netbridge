@@ -1,12 +1,16 @@
 package messages
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/niradler/go-netbridge/config"
 	"github.com/niradler/go-netbridge/tunnel"
 	"github.com/valyala/fasthttp"
 )
@@ -109,7 +113,7 @@ func ReadChunks(conn *websocket.Conn, msg Message) ([]Message, error) {
 	return messages, nil
 }
 
-func MessageHandler(conn *websocket.Conn, msg Message) error {
+func MessageHandler(conn *websocket.Conn, msg Message, config config.Config) error {
 	if conn == nil {
 		fmt.Println("Connection is not open")
 		return errors.New("connection is not open")
@@ -147,6 +151,19 @@ func MessageHandler(conn *websocket.Conn, msg Message) error {
 		req.SetBodyString(httpMsg.Body)
 
 		client := &fasthttp.Client{}
+
+		if config.REQUEST_CA_FILE != "" {
+			caCert, err := os.ReadFile(config.REQUEST_CA_FILE)
+			if err != nil {
+				return err
+			}
+			caCertPool := x509.NewCertPool()
+			caCertPool.AppendCertsFromPEM(caCert)
+			client.TLSConfig = &tls.Config{
+				RootCAs: caCertPool,
+			}
+		}
+
 		err := client.Do(req, resp)
 		if err != nil {
 			return err

@@ -12,6 +12,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	cfg.PORT = "8081"
+	cfg.Type = "client"
 	wss, err := shared.NewWebSocketConnection(cfg)
 	if err != nil {
 		log.Fatalf("Error creating WebSocket server: %v", err)
@@ -19,5 +22,5 @@ func main() {
 	defer wss.Close()
 
 	httpServer := shared.NewHTTPServer(cfg, wss)
-	log.Fatal(httpServer.Start(":8081"))
+	log.Fatal(httpServer.Start())
 }

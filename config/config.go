@@ -19,6 +19,7 @@ type Config struct {
 	LOG_FILE             string
 	Type                 string
 	SERVER_URL           string
+	SECRET               string
 }
 
 func LoadConfig() (*Config, error) {
@@ -37,6 +38,7 @@ func LoadConfig() (*Config, error) {
 		LOG_FILE:             os.Getenv("LOG_FILE"),
 		Type:                 os.Getenv("TUNNEL_TYPE"),
 		SERVER_URL:           os.Getenv("SERVER_URL"),
+		SECRET:               os.Getenv("SECRET"),
 	}
 
 	if config.PORT == "" {

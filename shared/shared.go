@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+
+	"github.com/gorilla/websocket"
+	"github.com/niradler/go-netbridge/messages"
+	"github.com/niradler/go-netbridge/tunnel"
 )
 
 func PrintTypes(s interface{}) {
@@ -26,4 +30,22 @@ func ConvertHeaders(headers http.Header) map[string]string {
 		}
 	}
 	return converted
+}
+
+func Ping(conn *websocket.Conn) error {
+	for i := 1; i <= 3; i++ {
+		err := tunnel.WriteJSON(conn, messages.Message{
+			Type:  messages.MessageType.Ping,
+			Total: 3,
+			Chunk: i,
+			Params: messages.PingMessage{
+				Body: "ping",
+			},
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

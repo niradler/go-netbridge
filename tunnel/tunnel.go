@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/gorilla/websocket"
+	"github.com/niradler/go-netbridge/config"
 )
 
 const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
@@ -28,8 +29,12 @@ func Create(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-func Connect(url url.URL) (*websocket.Conn, error) {
-	conn, _, err := websocket.DefaultDialer.Dial(url.String(), nil)
+func Connect(url url.URL, config config.Config) (*websocket.Conn, error) {
+	headers := http.Header{}
+	if config.SECRET != "" && config.Type == "client" {
+		headers.Add("Authorization", config.SECRET)
+	}
+	conn, _, err := websocket.DefaultDialer.Dial(url.String(), headers)
 	if err != nil {
 		log.Fatal("dial:", err)
 		return conn, err

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`go-netbridge` is an open-source package that provides a two-way tunnel for HTTP requests, acting as a proxy over WebSocket. This allows for seamless communication between HTTP clients and servers through a WebSocket connection.
+`netbridge` is an open-source package that provides a two-way tunnel for HTTP requests, acting as a proxy over WebSocket. This allows for seamless communication between HTTP clients and servers through a WebSocket connection.
 
 ## Features
 
@@ -13,7 +13,7 @@
 
 ## Installation
 
-To install `go-netbridge`, use `go get`:
+To install `netbridge`, use `go get`:
 
 ```sh
 go get github.com/niradler/go-netbridge
@@ -29,8 +29,8 @@ package main
 import (
     "log"
 
-    "github.com/niradler/go-netbridge/config"
-    "github.com/niradler/go-netbridge/shared"
+    "github.com/niradler/netbridge/config"
+    "github.com/niradler/netbridge/shared"
 )
 
 func main() {
@@ -57,8 +57,8 @@ package main
 import (
     "log"
 
-    "github.com/niradler/go-netbridge/config"
-    "github.com/niradler/go-netbridge/shared"
+    "github.com/niradler/netbridge/config"
+    "github.com/niradler/netbridge/shared"
 )
 
 func main() {
@@ -78,6 +78,25 @@ func main() {
 ## Configuration
 
 The configuration is managed through a configuration file. Ensure that the configuration file is correctly set up with the necessary parameters such as `SERVER_URL`, `X_Forwarded_Proto`, and `X_Forwarded_Host`.
+
+
+## Roadmap
+
+Here are some of the planned features and improvements for `netbridge`:
+
+- **Support for Large Payloads**: Implement chunking and compression to efficiently handle large payloads.
+- **Protocol Support**: Extend support to additional protocols such as SSH, HTTP/2, and gRPC.
+- **Monitoring and Logging**: Integrate monitoring and logging capabilities to track performance and diagnose issues.
+- **Automated Testing**: Develop a comprehensive suite of automated tests to ensure code quality and reliability.
+- **Infrastructure as Code**: Provide Terraform scripts and other IaC tools to deploy `netbridge` to various cloud providers
+- **Helm Charts**: Develop Helm charts for Kubernetes deployments.
+- **CI/CD Integration**: Integrate with CI/CD pipelines for automated deployment and testing.
+- **Advanced Configuration Options**: Provide more advanced configuration options for fine-tuning the behavior.
+- **Improved Documentation**: Expand the documentation with more examples and detailed explanations.
+- **Community Contributions**: Encourage and integrate contributions from the community to add new features and fix bugs.
+- **Performance Optimization**: Optimize the performance for handling a large number of concurrent connections.
+- **Load Balancing**: Add support for load balancing to distribute traffic across multiple servers.
+- **Multi Clients**: Add support for multiple clients.
 
 ## Contributing
 
