@@ -1,18 +1,12 @@
 package messages
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/niradler/go-netbridge/config"
-	"github.com/niradler/go-netbridge/tunnel"
-	"github.com/valyala/fasthttp"
 )
 
 var MessageType = struct {
@@ -28,16 +22,16 @@ var MessageType = struct {
 }
 
 type HttpRequestMessage struct {
-	Method  string            `json:"method"`
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
+	Method  string              `json:"method"`
+	URL     string              `json:"url"`
+	Headers map[string][]string `json:"headers"`
+	Body    string              `json:"body"`
 }
 
 type HttpResponseMessage struct {
-	StatusCode int               `json:"statusCode"`
-	Headers    map[string]string `json:"headers"`
-	Body       string            `json:"body"`
+	StatusCode int                 `json:"statusCode"`
+	Headers    map[string][]string `json:"headers"`
+	Body       string              `json:"body"`
 }
 
 type PingMessage struct {
@@ -111,84 +105,6 @@ func ReadChunks(conn *websocket.Conn, msg Message) ([]Message, error) {
 		}
 	}
 	return messages, nil
-}
-
-func MessageHandler(conn *websocket.Conn, msg Message, config config.Config) error {
-	if conn == nil {
-		fmt.Println("Connection is not open")
-		return errors.New("connection is not open")
-	} else {
-		fmt.Println("Connection is open")
-	}
-	switch msg.Type {
-	case MessageType.Ping:
-		pingMsg := msg.Params.(*PingMessage)
-		if pingMsg.Body == "ping" {
-			err := tunnel.WriteJSON(conn, Message{
-				Type: MessageType.Ping,
-				Params: PingMessage{
-					Body: "pong",
-				},
-				Response: true,
-				ID:       msg.ID,
-			})
-			if err != nil {
-				return err
-			}
-		}
-	case MessageType.Request:
-		httpMsg := msg.Params.(*HttpRequestMessage)
-		req := fasthttp.AcquireRequest()
-		defer fasthttp.ReleaseRequest(req)
-		resp := fasthttp.AcquireResponse()
-		defer fasthttp.ReleaseResponse(resp)
-
-		req.SetRequestURI(httpMsg.URL)
-		req.Header.SetMethod(httpMsg.Method)
-		for key, value := range httpMsg.Headers {
-			req.Header.Set(key, value)
-		}
-		req.SetBodyString(httpMsg.Body)
-
-		client := &fasthttp.Client{}
-
-		if config.REQUEST_CA_FILE != "" {
-			caCert, err := os.ReadFile(config.REQUEST_CA_FILE)
-			if err != nil {
-				return err
-			}
-			caCertPool := x509.NewCertPool()
-			caCertPool.AppendCertsFromPEM(caCert)
-			client.TLSConfig = &tls.Config{
-				RootCAs: caCertPool,
-			}
-		}
-
-		err := client.Do(req, resp)
-		if err != nil {
-			return err
-		}
-
-		body := string(resp.Body())
-		headers := make(map[string]string)
-		resp.Header.VisitAll(func(key, value []byte) {
-			headers[string(key)] = string(value)
-		})
-
-		msg.Response = true
-		err = tunnel.WriteJSON(conn, Message{
-			Type:     MessageType.Response,
-			Params:   HttpResponseMessage{StatusCode: resp.StatusCode(), Headers: headers, Body: body},
-			Response: msg.Response,
-			ID:       msg.ID,
-		})
-		if err != nil {
-			return err
-		}
-	default:
-		return errors.New("unknown message type")
-	}
-	return nil
 }
 
 func CreateId() string {

@@ -6,95 +6,17 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/gorilla/websocket"
 
 	"github.com/niradler/go-netbridge/config"
 	"github.com/niradler/go-netbridge/messages"
 	"github.com/niradler/go-netbridge/tunnel"
 )
 
-const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  maxMessageSize,
-	WriteBufferSize: maxMessageSize,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
-type WebSocketServer struct {
-	conn         *websocket.Conn
-	responseChan chan messages.HttpResponseMessage
-	messageMutex sync.Mutex
-	messageWG    sync.WaitGroup
-	config       *config.Config
-}
-
-// NewWebSocketServer initializes a WebSocketServer instance.
-func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
-	wsURL, err := url.Parse(cfg.SERVER_URL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse WebSocket URL: %w", err)
-	}
-	conn, err := tunnel.Connect(*wsURL, *cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to WebSocket: %w", err)
-	}
-
-	Ping(conn)
-
-	server := &WebSocketServer{
-		conn:         conn,
-		responseChan: make(chan messages.HttpResponseMessage),
-		config:       cfg,
-	}
-
-	server.messageWG.Add(1)
-	go server.listenForMessages()
-
-	return server, nil
-}
-
-// listenForMessages processes incoming WebSocket messages.
-func (wss *WebSocketServer) listenForMessages() {
-	defer wss.messageWG.Done()
-	for {
-		msg, err := messages.ReadAndParseMessage(wss.conn)
-		if err != nil {
-			log.Printf("Error reading message: %v", err)
-			break
-		}
-		if msg.Type == messages.MessageType.Response {
-			wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
-		} else {
-			err = messages.MessageHandler(wss.conn, msg, *wss.config)
-			if err != nil {
-				log.Printf("Error handling message: %v", err)
-				break
-			}
-		}
-	}
-}
-
-// Close cleans up WebSocket resources.
-func (wss *WebSocketServer) Close() {
-	wss.conn.Close()
-	wss.messageWG.Wait()
-}
-
-// SendMessage sends a message over the WebSocket connection.
-func (wss *WebSocketServer) SendMessage(msg messages.Message) error {
-	wss.messageMutex.Lock()
-	defer wss.messageMutex.Unlock()
-	return wss.conn.WriteJSON(msg)
-}
-
-// HTTPServer is a wrapper for the HTTP server with WebSocket integration.
 type HTTPServer struct {
 	config *config.Config
 	wss    *WebSocketServer
@@ -124,13 +46,13 @@ func NewWebSocketServer(hs *HTTPServer) {
 			defer wg.Done()
 			for {
 				msg, err := messages.ReadAndParseMessage(conn)
-				fmt.Printf("Received message: %+v\n", msg)
+				fmt.Printf("Received message: %+v %+v\n", msg.Type, msg.ID)
 				if err != nil {
 					log.Printf("Error reading message: %v", err)
 					break
 				}
 				if msg.Type == messages.MessageType.Response {
-					fmt.Printf("Received response: %+v\n", msg)
+					fmt.Printf("Received response: %+v %+v\n", msg.Type, msg.ID)
 					hs.wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
 				} else {
 					err = messages.MessageHandler(conn, msg, *hs.config)
@@ -153,7 +75,7 @@ func NewHTTPServer(config *config.Config, wss *WebSocketServer) *HTTPServer {
 	if config.SECRET != "" && config.Type != "client" {
 		router.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				authHeader := r.Header.Get("Authorization")
+				authHeader := r.Header.Get("X-Auth-SECRET")
 				if authHeader != config.SECRET {
 					http.Error(w, "Forbidden", http.StatusForbidden)
 					return
@@ -179,7 +101,25 @@ func (hs *HTTPServer) Start() error {
 		return http.ListenAndServeTLS(":"+hs.config.PORT, hs.config.SSL_CERT_FILE, hs.config.SSL_KEY_FILE, hs.router)
 	}
 
-	return http.ListenAndServe(":"+hs.config.PORT, hs.router)
+	return http.ListenAndServe("localhost:"+hs.config.PORT, hs.router)
+}
+
+var IgnoredHeaders = map[string]struct{}{
+	"Content-Length":           {},
+	"Transfer-Encoding":        {},
+	"Connection":               {},
+	"Keep-Alive":               {},
+	"Proxy-Authenticate":       {},
+	"Proxy-Authorization":      {},
+	"TE":                       {},
+	"Trailer":                  {},
+	"Upgrade":                  {},
+	"Sec-WebSocket-Accept":     {},
+	"Sec-WebSocket-Extensions": {},
+	"Sec-WebSocket-Key":        {},
+	"Sec-WebSocket-Protocol":   {},
+	"Sec-WebSocket-Version":    {},
+	"Content-Encoding":         {},
 }
 
 func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
@@ -195,15 +135,28 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u := url.URL{Scheme: hs.config.X_Forwarded_Proto, Host: hs.config.X_Forwarded_Host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+	host := hs.config.X_Forwarded_Host
+	if r.Header.Get("X-Forwarded-Host") != "" {
+		host = r.Header.Get("X-Forwarded-Host")
+	}
 
+	proto := hs.config.X_Forwarded_Proto
+	if r.Header.Get("X-Forwarded-Proto") != "" {
+		proto = r.Header.Get("X-Forwarded-Proto")
+	}
+	u := url.URL{Scheme: proto, Host: host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+
+	reqHeaders := r.Header.Clone()
+	reqHeaders.Del("X-Forwarded-Proto")
+	reqHeaders.Del("X-Forwarded-Host")
+	reqHeaders.Del("X-Auth-SECRET")
 	msg.Params = messages.HttpRequestMessage{
 		Method:  r.Method,
 		URL:     u.String(),
-		Headers: ConvertHeaders(r.Header),
+		Headers: reqHeaders,
 		Body:    string(bodyBytes),
 	}
-	fmt.Printf("Request Params: %+v\n", msg.Params)
+	fmt.Printf("Request Params: %+v, %v\n", r.Method, u.String())
 
 	err = hs.wss.SendMessage(msg)
 	if err != nil {
@@ -214,9 +167,13 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case responseParams := <-hs.wss.responseChan:
+		log.Printf("api response: %+v body=%v", responseParams.StatusCode, len(responseParams.Body))
 		for key, value := range responseParams.Headers {
-			w.Header().Set(key, value)
+			if _, ok := IgnoredHeaders[key]; !ok {
+				w.Header().Set(key, strings.Join(value, ","))
+			}
 		}
+
 		w.WriteHeader(responseParams.StatusCode)
 		w.Write([]byte(responseParams.Body))
 	case <-r.Context().Done():
