@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Message, error) {
+const MaxChunkSize = 10 * 1024 * 1024 // 10 MB
+
+func HttpRequestHandler(id string, conn *websocket.Conn, requestParams *HttpRequestMessage, config *config.Config) error {
 	log.Printf("HttpRequestMessage: %v  %v bodylen=%v", requestParams.Method, requestParams.URL, len(requestParams.Body))
 
 	req := fasthttp.AcquireRequest()
@@ -33,16 +36,16 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Mes
 	req.SetBodyString(requestParams.Body)
 
 	client := &fasthttp.Client{
-		ReadBufferSize:      16 * 1024,
-		WriteBufferSize:     16 * 1024,
-		MaxConnDuration:     30 * time.Minute,
+		ReadBufferSize:      MaxChunkSize,
+		WriteBufferSize:     MaxChunkSize,
+		MaxConnDuration:     5 * time.Minute,
 		MaxIdleConnDuration: 60 * time.Second,
 	}
 
 	if config.REQUEST_CA_FILE != "" {
 		caCert, err := os.ReadFile(config.REQUEST_CA_FILE)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(caCert)
@@ -53,18 +56,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Mes
 
 	err := client.DoRedirects(req, resp, 10)
 	if err != nil {
-		return nil, err
-	}
-
-	var body string
-	if resp.Header.Peek("Content-Encoding") != nil && string(resp.Header.Peek("Content-Encoding")) == "gzip" {
-		bodyBytes, err := resp.BodyGunzip()
-		if err != nil {
-			return nil, err
-		}
-		body = string(bodyBytes)
-	} else {
-		body = string(resp.Body())
+		return err
 	}
 
 	headers := make(map[string][]string)
@@ -72,16 +64,43 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Mes
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
-	responseMsg := Message{
-		Type:     MessageType.Response,
-		Params:   HttpResponseMessage{StatusCode: resp.StatusCode(), Headers: headers, Body: body},
-		Response: true,
-		ID:       CreateId(),
+	totalSize := resp.Header.ContentLength()
+	chunkCounter := 0
+
+	for {
+		chunk := make([]byte, MaxChunkSize)
+		n, err := resp.BodyStream().Read(chunk)
+		if err != nil {
+			log.Printf("Error reading response body: %v", err)
+			if err == http.ErrBodyReadAfterClose {
+				break
+			}
+
+			return err
+		}
+
+		chunkCounter++
+		responseMsg := Message{
+			Type:     MessageType.Response,
+			Params:   HttpResponseMessage{StatusCode: resp.StatusCode(), Headers: headers, Body: string(chunk)},
+			Response: true,
+			ID:       id,
+			Total:    int(totalSize),
+			Chunk:    chunkCounter,
+		}
+
+		log.Printf("HttpResponseMessage, StatusCode=%v Method=%v URL=%v, Chunk=%v", resp.StatusCode(), requestParams.Method, requestParams.URL, responseMsg.Chunk)
+		err = conn.WriteJSON(responseMsg)
+		if err != nil {
+			return err
+		}
+
+		if n < MaxChunkSize {
+			break
+		}
 	}
 
-	log.Printf("HttpResponseMessage, StatusCode=%v Method=%v URL=%v bodylen=%v", resp.StatusCode(), requestParams.Method, requestParams.URL, len(body))
-
-	return &responseMsg, nil
+	return nil
 
 }
 
@@ -111,14 +130,22 @@ func MessageHandler(conn *websocket.Conn, msg Message, config config.Config) err
 		if !ok {
 			return errors.New("failed to parse request message")
 		}
-		responseMsg, err := HttpRequest(responseParams, &config)
+		err := HttpRequestHandler(msg.ID, conn, responseParams, &config)
 		if err != nil {
-			return err
+			log.Printf("Error handling request: %v", err)
+			err = conn.WriteJSON(Message{
+				Type:     MessageType.Response,
+				Params:   HttpResponseMessage{StatusCode: 500, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: `{"error": "Request failed"}`},
+				Response: true,
+				ID:       msg.ID,
+				Total:    1,
+				Chunk:    1,
+			})
+			if err != nil {
+				return err
+			}
 		}
-		err = tunnel.WriteJSON(conn, responseMsg)
-		if err != nil {
-			return err
-		}
+
 	default:
 		return errors.New("unknown message type")
 	}

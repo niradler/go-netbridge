@@ -89,7 +89,9 @@ func NewHTTPServer(config *config.Config, wss *WebSocketServer) *HTTPServer {
 		router: router,
 		config: config,
 	}
-
+	router.Get("/_health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	router.NotFound(hs.proxyHandler)
 
 	return hs
