@@ -21,14 +21,14 @@ var MessageType = struct {
 	Error:    "error",
 }
 
-type HttpRequestMessage struct {
+type HttpRequestMessageParams struct {
 	Method  string              `json:"method"`
 	URL     string              `json:"url"`
 	Headers map[string][]string `json:"headers"`
 	Body    string              `json:"body"`
 }
 
-type HttpResponseMessage struct {
+type HttpResponseMessageParams struct {
 	StatusCode int                 `json:"statusCode"`
 	Headers    map[string][]string `json:"headers"`
 	Body       string              `json:"body"`
@@ -43,6 +43,16 @@ type ErrorMessage struct {
 	Message string `json:"message"`
 }
 
+type HttpRequestMessage struct {
+	Message
+	Params HttpRequestMessageParams `json:"params"`
+}
+
+type HttpResponseMessage struct {
+	Message
+	Params HttpResponseMessageParams `json:"params"`
+}
+
 type Message struct {
 	Type     string      `json:"type"`
 	Params   interface{} `json:"params"`
@@ -52,18 +62,19 @@ type Message struct {
 	ID       string      `json:"id"`
 }
 
-func parseMessage[T any](msg Message, target *T) (Message, error) {
-	params, err := json.Marshal(msg.Params)
+func ParseMessageParams[T any](params interface{}, target *T) (T, error) {
+	var empty T
+	data, err := json.Marshal(params)
 	if err != nil {
-		return msg, err
-	}
-	err = json.Unmarshal(params, target)
-	if err != nil {
-		return msg, err
-	}
-	msg.Params = target
 
-	return msg, nil
+		return empty, err
+	}
+	err = json.Unmarshal(data, target)
+	if err != nil {
+		return empty, err
+	}
+
+	return *target, nil
 }
 
 func ReadAndParseMessage(conn *websocket.Conn) (Message, error) {
@@ -75,17 +86,13 @@ func ReadAndParseMessage(conn *websocket.Conn) (Message, error) {
 
 	switch msg.Type {
 	case MessageType.Ping:
-		var pingMsg PingMessage
-		return parseMessage(msg, &pingMsg)
+		return msg, nil
 	case MessageType.Request:
-		var httpMsg HttpRequestMessage
-		return parseMessage(msg, &httpMsg)
+		return msg, nil
 	case MessageType.Response:
-		var resMsg HttpResponseMessage
-		return parseMessage(msg, &resMsg)
+		return msg, nil
 	case MessageType.Error:
-		var errorMsg ErrorMessage
-		return parseMessage(msg, &errorMsg)
+		return msg, nil
 	default:
 		return msg, errors.New("unknown message type")
 	}

@@ -5,9 +5,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -18,8 +20,8 @@ import (
 
 const MaxChunkSize = 10 * 1024 * 1024 // 10 MB
 
-func HttpRequestHandler(id string, conn *websocket.Conn, requestParams *HttpRequestMessage, config *config.Config) error {
-	log.Printf("HttpRequestMessage: %v  %v bodylen=%v", requestParams.Method, requestParams.URL, len(requestParams.Body))
+func FastHttpRequestHandler(id string, conn *websocket.Conn, requestParams *HttpRequestMessageParams, config *config.Config) error {
+	log.Printf("HttpRequestMessageParams: %v  %v bodylen=%v", requestParams.Method, requestParams.URL, len(requestParams.Body))
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -82,14 +84,14 @@ func HttpRequestHandler(id string, conn *websocket.Conn, requestParams *HttpRequ
 		chunkCounter++
 		responseMsg := Message{
 			Type:     MessageType.Response,
-			Params:   HttpResponseMessage{StatusCode: resp.StatusCode(), Headers: headers, Body: string(chunk)},
+			Params:   HttpResponseMessageParams{StatusCode: resp.StatusCode(), Headers: headers, Body: string(chunk)},
 			Response: true,
 			ID:       id,
 			Total:    int(totalSize),
 			Chunk:    chunkCounter,
 		}
 
-		log.Printf("HttpResponseMessage, StatusCode=%v Method=%v URL=%v, Chunk=%v", resp.StatusCode(), requestParams.Method, requestParams.URL, responseMsg.Chunk)
+		log.Printf("HttpResponseMessageParams, StatusCode=%v Method=%v URL=%v, Chunk=%v", resp.StatusCode(), requestParams.Method, requestParams.URL, responseMsg.Chunk)
 		err = conn.WriteJSON(responseMsg)
 		if err != nil {
 			return err
@@ -102,6 +104,63 @@ func HttpRequestHandler(id string, conn *websocket.Conn, requestParams *HttpRequ
 
 	return nil
 
+}
+
+func HttpRequestHandler(id string, conn *websocket.Conn, requestParams *HttpRequestMessageParams, config *config.Config) error {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Allow up to 10 redirects
+			if len(via) >= 10 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequest(requestParams.Method, requestParams.URL, strings.NewReader(requestParams.Body))
+	if err != nil {
+		return err
+	}
+
+	// Copy headers from the requestParams
+	for key, values := range requestParams.Headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	totalChunks := int(resp.ContentLength) / MaxChunkSize
+	chunkCounter := 0
+	buffer := make([]byte, MaxChunkSize)
+	for {
+		n, err := resp.Body.Read(buffer)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+		responseMessage := &Message{
+			Type:     MessageType.Response,
+			Params:   HttpResponseMessageParams{StatusCode: resp.StatusCode, Headers: resp.Header, Body: string(buffer)},
+			Response: true,
+			ID:       id,
+			Total:    int(totalChunks),
+			Chunk:    chunkCounter,
+		}
+		if err := tunnel.WriteJSON(conn, responseMessage); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func MessageHandler(conn *websocket.Conn, msg Message, config config.Config) error {
@@ -126,7 +185,7 @@ func MessageHandler(conn *websocket.Conn, msg Message, config config.Config) err
 			}
 		}
 	case MessageType.Request:
-		responseParams, ok := msg.Params.(*HttpRequestMessage)
+		responseParams, ok := msg.Params.(*HttpRequestMessageParams)
 		if !ok {
 			return errors.New("failed to parse request message")
 		}
@@ -135,7 +194,7 @@ func MessageHandler(conn *websocket.Conn, msg Message, config config.Config) err
 			log.Printf("Error handling request: %v", err)
 			err = conn.WriteJSON(Message{
 				Type:     MessageType.Response,
-				Params:   HttpResponseMessage{StatusCode: 500, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: `{"error": "Request failed"}`},
+				Params:   HttpResponseMessageParams{StatusCode: 500, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: `{"error": "Request failed"}`},
 				Response: true,
 				ID:       msg.ID,
 				Total:    1,

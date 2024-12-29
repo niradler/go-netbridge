@@ -41,7 +41,15 @@ func (wss *WebSocketServer) listenForMessages() {
 			break
 		}
 		if msg.Type == messages.MessageType.Response {
-			wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
+			var responseParams messages.HttpResponseMessageParams
+			_, err := messages.ParseMessageParams[messages.HttpResponseMessageParams](msg.Params, &responseParams)
+			if err != nil {
+				log.Printf("Error handling response message: %v", err)
+			}
+			wss.responseChan <- messages.HttpResponseMessage{
+				Message: msg,
+				Params:  responseParams,
+			}
 		} else {
 			err = messages.MessageHandler(wss.conn, msg, *wss.config)
 			if err != nil {

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/niradler/go-netbridge/config"
@@ -34,13 +35,20 @@ func Connect(url url.URL, config config.Config) (*websocket.Conn, error) {
 	if config.SECRET != "" && config.Type == "client" {
 		headers.Add("Authorization", config.SECRET)
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(url.String(), headers)
-	if err != nil {
-		log.Fatal("dial:", err)
-		return conn, err
+
+	var conn *websocket.Conn
+	var err error
+	for i := 0; i < 5; i++ {
+		conn, _, err = websocket.DefaultDialer.Dial(url.String(), headers)
+		if err == nil {
+			return conn, nil
+		}
+		log.Printf("dial attempt %d failed: %v", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
 
-	return conn, nil
+	log.Fatal("dial failed after 5 attempts:", err)
+	return conn, err
 }
 
 func Send(conn *websocket.Conn, msg []byte) error {
