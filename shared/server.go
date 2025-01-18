@@ -23,6 +23,29 @@ type HTTPServer struct {
 	router *chi.Mux
 }
 
+func CreateInternalErrorResponseMessage(msg messages.Message, err error) messages.HttpResponseMessage {
+
+	log.Printf("CreateInternalErrorResponseMessage: %v", err)
+
+	var InternalServerErrorResponseMessage = messages.HttpResponseMessage{
+		Message: messages.Message{
+			ID:       msg.ID,
+			Type:     messages.MessageType.Response,
+			Response: true,
+			Total:    1,
+			Chunk:    1,
+		},
+		Params: messages.HttpResponseMessageParams{
+			StatusCode: http.StatusInternalServerError,
+			Headers: map[string][]string{
+				"Content-Type": {"application/json"},
+			},
+			Body: `{"error": "` + err.Error() + `"}`,
+		},
+	}
+	return InternalServerErrorResponseMessage
+}
+
 func NewWebSocketServer(hs *HTTPServer) {
 
 	hs.router.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -53,11 +76,21 @@ func NewWebSocketServer(hs *HTTPServer) {
 				}
 				if msg.Type == messages.MessageType.Response {
 					fmt.Printf("Received response: %+v %+v\n", msg.Type, msg.ID)
-					hs.wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
+					var responseParams messages.HttpResponseMessageParams
+
+					_, err := messages.ParseMessageParams[messages.HttpResponseMessageParams](msg.Params, &responseParams)
+					if err != nil {
+						hs.wss.responseChan <- CreateInternalErrorResponseMessage(msg, err)
+					}
+					hs.wss.responseChan <- messages.HttpResponseMessage{
+						Message: msg,
+						Params:  responseParams,
+					}
+
 				} else {
 					err = messages.MessageHandler(conn, msg, *hs.config)
 					if err != nil {
-						log.Printf("Error handling message: %v", err)
+						hs.wss.responseChan <- CreateInternalErrorResponseMessage(msg, err)
 					}
 				}
 			}
@@ -89,7 +122,9 @@ func NewHTTPServer(config *config.Config, wss *WebSocketServer) *HTTPServer {
 		router: router,
 		config: config,
 	}
-
+	router.Get("/_health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	router.NotFound(hs.proxyHandler)
 
 	return hs
@@ -150,7 +185,7 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	reqHeaders.Del("X-Forwarded-Proto")
 	reqHeaders.Del("X-Forwarded-Host")
 	reqHeaders.Del("X-Auth-SECRET")
-	msg.Params = messages.HttpRequestMessage{
+	msg.Params = messages.HttpRequestMessageParams{
 		Method:  r.Method,
 		URL:     u.String(),
 		Headers: reqHeaders,
@@ -165,17 +200,31 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var responses = []messages.HttpResponseMessage{}
+
 	select {
-	case responseParams := <-hs.wss.responseChan:
-		log.Printf("api response: %+v body=%v", responseParams.StatusCode, len(responseParams.Body))
-		for key, value := range responseParams.Headers {
-			if _, ok := IgnoredHeaders[key]; !ok {
-				w.Header().Set(key, strings.Join(value, ","))
+	case responseMessage := <-hs.wss.responseChan:
+		responses = append(responses, responseMessage)
+
+		if responseMessage.Message.Total == responseMessage.Message.Chunk {
+
+			for key, value := range responseMessage.Params.Headers {
+				if _, ok := IgnoredHeaders[key]; !ok {
+					w.Header().Set(key, strings.Join(value, ","))
+				}
 			}
+			w.WriteHeader(responseMessage.Params.StatusCode)
 		}
 
-		w.WriteHeader(responseParams.StatusCode)
-		w.Write([]byte(responseParams.Body))
+		log.Printf("api response: %+v ", responseMessage.Params.StatusCode)
+
+		for len(responses) > 0 {
+			for _, resp := range responses {
+				w.Write([]byte(resp.Params.Body))
+			}
+			responses = []messages.HttpResponseMessage{}
+		}
+
 	case <-r.Context().Done():
 		http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 	}
