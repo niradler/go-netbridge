@@ -21,6 +21,7 @@ func main() {
 	}
 	defer wss.Close()
 
-	httpServer := shared.NewHTTPServer(cfg, wss)
+	go wss.Client.ReceiveMessages()
+	httpServer := shared.NewHTTPServer(cfg, wss.Client)
 	log.Fatal(httpServer.Start())
 }

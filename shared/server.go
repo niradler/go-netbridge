@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,65 +12,67 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-
 	"github.com/niradler/go-netbridge/config"
-	"github.com/niradler/go-netbridge/messages"
 	"github.com/niradler/go-netbridge/tunnel"
+	"github.com/niradler/socketflow"
 )
 
 type HTTPServer struct {
 	config *config.Config
-	wss    *WebSocketServer
+	wss    *socketflow.WebSocketClient
 	router *chi.Mux
 }
 
 func NewWebSocketServer(hs *HTTPServer) {
-
 	hs.router.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := tunnel.Create(w, r)
+		client, err := tunnel.Create(w, r)
 		if err != nil {
 			log.Println("Error upgrading connection:", err)
 			return
 		}
+		log.Println("WebSocket connection established")
+		hs.wss = client
 
-		hs.wss = &WebSocketServer{
-			conn:         conn,
-			responseChan: make(chan messages.HttpResponseMessage),
-		}
+		defer client.Close()
 
-		defer conn.Close()
+		go client.ReceiveMessages()
 
 		var wg sync.WaitGroup
 		wg.Add(1)
 
 		go func() {
 			defer wg.Done()
-			for {
-				msg, err := messages.ReadAndParseMessage(conn)
-				fmt.Printf("Received message: %+v %+v\n", msg.Type, msg.ID)
+			for msg := range client.Subscribe("request") {
+				fmt.Printf("Received message: %+v\n", string(msg.Payload))
+				var req HttpRequestMessage
+				err := json.Unmarshal(msg.Payload, &req)
 				if err != nil {
-					log.Printf("Error reading message: %v", err)
-					break
+					log.Printf("Error parsing request message: %v", err)
+					continue
 				}
-				if msg.Type == messages.MessageType.Response {
-					fmt.Printf("Received response: %+v %+v\n", msg.Type, msg.ID)
-					hs.wss.responseChan <- *(msg.Params.(*messages.HttpResponseMessage))
-				} else {
-					err = messages.MessageHandler(conn, msg, *hs.config)
-					if err != nil {
-						log.Printf("Error handling message: %v", err)
-					}
+				res, err := HttpRequest(&req, hs.config)
+				if err != nil {
+					log.Printf("Error in http request: %v", err)
+					continue
 				}
+				payload, err := json.Marshal(res)
+				id, err := client.SendMessage("response", payload)
+				if err != nil {
+					log.Printf("Error in send response: %v", err)
+					continue
+				}
+
+				fmt.Println("Sent response with ID:", id)
+
 			}
 		}()
 
 		wg.Wait()
 	})
-
 }
 
 // NewHTTPServer creates a new HTTPServer instance.
-func NewHTTPServer(config *config.Config, wss *WebSocketServer) *HTTPServer {
+func NewHTTPServer(config *config.Config, wss *socketflow.WebSocketClient) *HTTPServer {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	if config.SECRET != "" && config.Type != "client" {
@@ -123,16 +126,22 @@ var IgnoredHeaders = map[string]struct{}{
 }
 
 func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	var msg messages.Message
-	msg.ID = messages.CreateId()
-	msg.Type = messages.MessageType.Request
-	msg.Response = false
-	msg.Total = 1
-	msg.Chunk = 1
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-		return
+
+	// Stream the request body in chunks
+	chunkSize := 1024 * 1024 // 1 MB chunks
+	buf := make([]byte, chunkSize)
+	var payload []byte
+
+	for {
+		n, err := r.Body.Read(buf)
+		if err != nil && err != io.EOF {
+			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			return
+		}
+		if n == 0 {
+			break
+		}
+		payload = append(payload, buf[:n]...)
 	}
 
 	host := hs.config.X_Forwarded_Host
@@ -150,32 +159,47 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	reqHeaders.Del("X-Forwarded-Proto")
 	reqHeaders.Del("X-Forwarded-Host")
 	reqHeaders.Del("X-Auth-SECRET")
-	msg.Params = messages.HttpRequestMessage{
+	req := HttpRequestMessage{
 		Method:  r.Method,
 		URL:     u.String(),
 		Headers: reqHeaders,
-		Body:    string(bodyBytes),
+		Body:    string(payload),
 	}
-	fmt.Printf("Request Params: %+v, %v\n", r.Method, u.String())
+	payload, err := json.Marshal(req)
+	if err != nil {
+		log.Printf("Error marshaling request: %v", err)
+		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
+		return
+	}
 
-	err = hs.wss.SendMessage(msg)
+	id, err := hs.wss.SendMessage("request", payload)
 	if err != nil {
 		log.Printf("Error writing message: %v", err)
 		http.Error(w, "Failed to send message", http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Sent message with ID:", id)
 
 	select {
-	case responseParams := <-hs.wss.responseChan:
-		log.Printf("api response: %+v body=%v", responseParams.StatusCode, len(responseParams.Body))
-		for key, value := range responseParams.Headers {
+	case responseMessage := <-hs.wss.Subscribe("response"):
+		// TODO: Handle chunked responses
+		log.Printf("Response message: %+v, %t", responseMessage.ID, responseMessage.IsChunk)
+		log.Printf("Response payload: %s", string(responseMessage.Payload))
+		var response HttpResponseMessage
+		err := json.Unmarshal(responseMessage.Payload, &response)
+		if err != nil {
+			log.Printf("Error unmarshalling response: %v", err)
+			http.Error(w, "Failed to parse response", http.StatusInternalServerError)
+			return
+		}
+		for key, value := range response.Headers {
 			if _, ok := IgnoredHeaders[key]; !ok {
 				w.Header().Set(key, strings.Join(value, ","))
 			}
 		}
 
-		w.WriteHeader(responseParams.StatusCode)
-		w.Write([]byte(responseParams.Body))
+		w.WriteHeader(response.StatusCode)
+		w.Write([]byte(response.Body))
 	case <-r.Context().Done():
 		http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 	}

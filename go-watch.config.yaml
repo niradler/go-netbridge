@@ -1,0 +1,18 @@
+# Directories to ignore
+ignore_dirs:
+  - "bin"
+  - ".git"
+
+# Time to debounce file change events
+debounce_time: "2s"
+
+# Rules to define actions based on file change patterns
+rules:
+  - patterns:
+      - "**/*.go"  # This matches .go files in any subdirectory
+      - "*.go"          
+    commands:
+      - cmd: "go run server/server.go"
+        parallel: true
+      - cmd: "go run client/client.go"
+        parallel: true           

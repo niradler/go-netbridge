@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/niradler/go-netbridge/config"
+	"github.com/niradler/socketflow"
 )
 
 const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
@@ -19,58 +20,30 @@ var Upgrader = websocket.Upgrader{
 	},
 }
 
-func Create(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
+func Create(w http.ResponseWriter, r *http.Request) (*socketflow.WebSocketClient, error) {
 	conn, err := Upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Error upgrading connection:", err)
-		return conn, err
+		return nil, err
 	}
-
-	return conn, nil
+	client := socketflow.NewWebSocketClient(conn, socketflow.Config{
+		ChunkSize: 1024,
+	})
+	return client, nil
 }
 
-func Connect(url url.URL, config config.Config) (*websocket.Conn, error) {
+func Connect(url url.URL, config config.Config) (*socketflow.WebSocketClient, error) {
 	headers := http.Header{}
 	if config.SECRET != "" && config.Type == "client" {
 		headers.Add("Authorization", config.SECRET)
 	}
 	conn, _, err := websocket.DefaultDialer.Dial(url.String(), headers)
 	if err != nil {
-		log.Fatal("dial:", err)
-		return conn, err
+		log.Printf("Failed to connect to WebSocket server: %v", err)
+		return nil, err
 	}
-
-	return conn, nil
-}
-
-func Send(conn *websocket.Conn, msg []byte) error {
-	err := conn.WriteMessage(websocket.TextMessage, msg)
-	if err != nil {
-		log.Println("Error sending message:", err)
-	}
-	return err
-}
-
-func Receive(conn *websocket.Conn) ([]byte, error) {
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		log.Println("Error reading message:", err)
-	}
-	return msg, err
-}
-
-func WriteJSON(conn *websocket.Conn, v interface{}) error {
-	err := conn.WriteJSON(v)
-	if err != nil {
-		log.Println("Error sending JSON:", err)
-	}
-	return err
-}
-
-func ReadJSON(conn *websocket.Conn, v interface{}) error {
-	err := conn.ReadJSON(v)
-	if err != nil {
-		log.Println("Error receiving JSON:", err)
-	}
-	return err
+	client := socketflow.NewWebSocketClient(conn, socketflow.Config{
+		ChunkSize: 1024,
+	})
+	return client, nil
 }
