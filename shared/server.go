@@ -37,6 +37,13 @@ func NewWebSocketServer(hs *HTTPServer) {
 
 		go client.ReceiveMessages()
 
+		statusChan := client.SubscribeToStatus()
+		go func() {
+			for status := range statusChan {
+				log.Printf("Received status: %v\n", status)
+			}
+		}()
+
 		var wg sync.WaitGroup
 		wg.Add(1)
 
@@ -59,6 +66,7 @@ func NewWebSocketServer(hs *HTTPServer) {
 		}()
 
 		wg.Wait()
+
 	})
 }
 
