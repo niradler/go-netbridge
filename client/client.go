@@ -13,6 +13,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	shared.InitLogger(*cfg)
+
 	cfg.PORT = "8081"
 	cfg.Type = "client"
 	wss, err := shared.NewWebSocketConnection(cfg)

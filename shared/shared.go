@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"reflect"
@@ -14,6 +13,7 @@ import (
 	"github.com/niradler/go-netbridge/config"
 	"github.com/niradler/socketflow"
 	"github.com/valyala/fasthttp"
+	"go.uber.org/zap"
 )
 
 func PrintTypes(s interface{}) {
@@ -62,7 +62,8 @@ type HttpResponseMessage struct {
 }
 
 func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Config, wss *socketflow.WebSocketClient) error {
-	log.Printf("HttpRequestMessage: %v  %v bodylen=%v", requestParams.Method, requestParams.URL, len(requestParams.Body))
+	logger := GetLogger()
+	logger.Info("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -111,7 +112,6 @@ func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Confi
 		body = bodyBytes
 	} else {
 		body = resp.Body()
-		// resp.StreamBody
 	}
 
 	headers := make(map[string][]string)
@@ -119,20 +119,25 @@ func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Confi
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
-	log.Printf("HttpResponseMessage, StatusCode=%v Method=%v URL=%v", resp.StatusCode(), requestParams.Method, requestParams.URL)
+	logger.Info("HttpResponseMessage", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
 	res := HttpResponseMessage{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,
 		Body:       body,
 	}
+
 	payload, err := json.Marshal(res)
-	id, err := wss.SendMessage("response", payload)
 	if err != nil {
-		log.Printf("Error in send response: %v", err)
+		logger.Error("Error marshaling response", zap.Error(err))
 		return err
 	}
 
-	fmt.Println("Sent response with ID:", id)
+	id, err := wss.SendMessage("response", payload)
+	if err != nil {
+		logger.Error("Error in send response", zap.Error(err))
+		return err
+	}
 
+	logger.Info("Sent response", zap.String("ID", id))
 	return nil
 }

@@ -3,7 +3,6 @@ package shared
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	"github.com/niradler/go-netbridge/config"
 	"github.com/niradler/go-netbridge/tunnel"
 	"github.com/niradler/socketflow"
+	"go.uber.org/zap"
 )
 
 const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
@@ -20,7 +20,7 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  maxMessageSize,
 	WriteBufferSize: maxMessageSize,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return true // Consider validating the origin for security
 	},
 }
 
@@ -54,7 +54,7 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 		return nil, fmt.Errorf("failed to connect to WebSocket: %w", err)
 	}
 
-	fmt.Println("WebSocket connected")
+	GetLogger().Info("WebSocket connected")
 
 	server := &WebSocketServer{
 		Client:       client,
@@ -67,17 +67,13 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 
 	go func() {
 		for msg := range client.Subscribe("request") {
-			fmt.Printf("Received message: %+v\n", string(msg.Payload))
 			var req HttpRequestMessage
-			err := json.Unmarshal(msg.Payload, &req)
-			if err != nil {
-				log.Printf("Error parsing request message: %v", err)
+			if err := json.Unmarshal(msg.Payload, &req); err != nil {
+				GetLogger().Error("Error parsing request message", zap.Error(err))
 				continue
 			}
-			err = HttpRequestResponse(&req, cfg, client)
-			if err != nil {
-				log.Printf("Error in http request: %v", err)
-				continue
+			if err := HttpRequestResponse(&req, cfg, client); err != nil {
+				GetLogger().Error("Error in HTTP request", zap.Error(err))
 			}
 		}
 	}()
@@ -85,7 +81,7 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 	statusChan := client.SubscribeToStatus()
 	go func() {
 		for status := range statusChan {
-			log.Printf("Received status: %v\n", status)
+			GetLogger().Info("Received status", zap.Any("status", status))
 		}
 	}()
 

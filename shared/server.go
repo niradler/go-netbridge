@@ -2,9 +2,7 @@ package shared
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +13,7 @@ import (
 	"github.com/niradler/go-netbridge/config"
 	"github.com/niradler/go-netbridge/tunnel"
 	"github.com/niradler/socketflow"
+	"go.uber.org/zap"
 )
 
 type HTTPServer struct {
@@ -24,13 +23,14 @@ type HTTPServer struct {
 }
 
 func NewWebSocketServer(hs *HTTPServer) {
+	logger := GetLogger()
 	hs.router.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		client, err := tunnel.Create(w, r)
 		if err != nil {
-			log.Println("Error upgrading connection:", err)
+			logger.Error("Error upgrading connection", zap.Error(err))
 			return
 		}
-		log.Println("WebSocket connection established")
+		logger.Info("WebSocket connection established")
 		hs.wss = client
 
 		defer client.Close()
@@ -40,7 +40,7 @@ func NewWebSocketServer(hs *HTTPServer) {
 		statusChan := client.SubscribeToStatus()
 		go func() {
 			for status := range statusChan {
-				log.Printf("Received status: %v\n", status)
+				logger.Info("Received status", zap.Any("status", status))
 			}
 		}()
 
@@ -50,16 +50,16 @@ func NewWebSocketServer(hs *HTTPServer) {
 		go func() {
 			defer wg.Done()
 			for msg := range client.Subscribe("request") {
-				fmt.Printf("Received message: %+v\n", string(msg.Payload))
+				logger.Info("Received message", zap.String("message", string(msg.Payload)))
 				var req HttpRequestMessage
 				err := json.Unmarshal(msg.Payload, &req)
 				if err != nil {
-					log.Printf("Error parsing request message: %v", err)
+					logger.Error("Error parsing request message", zap.Error(err))
 					continue
 				}
 				err = HttpRequestResponse(&req, hs.config, client)
 				if err != nil {
-					log.Printf("Error in http request: %v", err)
+					logger.Error("Error in http request", zap.Error(err))
 					continue
 				}
 			}
@@ -125,7 +125,7 @@ var IgnoredHeaders = map[string]struct{}{
 }
 
 func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received request: %s %s", r.Method, r.URL.String())
+	logger.Info("Received request", zap.String("method", r.Method), zap.String("url", r.URL.String()))
 	// Stream the request body in chunks
 	chunkSize := 1024 * 1024 // 1 MB chunks
 	buf := make([]byte, chunkSize)
@@ -166,26 +166,26 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
-		log.Printf("Error marshaling request: %v", err)
+		logger.Error("Error marshaling request", zap.Error(err))
 		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
 		return
 	}
 
 	id, err := hs.wss.SendMessage("request", payload)
 	if err != nil {
-		log.Printf("Error writing message: %v", err)
+		logger.Error("Error writing message", zap.Error(err))
 		http.Error(w, "Failed to send message", http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("Sent message with ID:", id)
+	logger.Info("Sent message with ID", zap.String("id", id))
 
 	select {
 	case responseMessage := <-hs.wss.Subscribe("response"):
-		log.Printf("Response message: %+v, %t", responseMessage.ID, responseMessage.IsChunk)
+		logger.Info("Response message", zap.String("id", responseMessage.ID), zap.Bool("isChunk", responseMessage.IsChunk))
 		var response HttpResponseMessage
 		err := json.Unmarshal(responseMessage.Payload, &response)
 		if err != nil {
-			log.Printf("Error unmarshalling response: %v", err)
+			logger.Error("Error unmarshalling response", zap.Error(err))
 			http.Error(w, "Failed to parse response", http.StatusInternalServerError)
 			return
 		}
@@ -199,7 +199,7 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 		_, err = w.Write(response.Body)
 		if err != nil {
-			log.Printf("Error writing chunk to response: %v", err)
+			logger.Error("Error writing chunk to response", zap.Error(err))
 			return
 		}
 		w.(http.Flusher).Flush() // Flush the response to the client
