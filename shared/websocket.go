@@ -1,7 +1,9 @@
 package shared
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sync"
@@ -61,6 +63,31 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 	}
 
 	server.messageWG.Add(1)
+	go client.ReceiveMessages()
+
+	go func() {
+		for msg := range client.Subscribe("request") {
+			fmt.Printf("Received message: %+v\n", string(msg.Payload))
+			var req HttpRequestMessage
+			err := json.Unmarshal(msg.Payload, &req)
+			if err != nil {
+				log.Printf("Error parsing request message: %v", err)
+				continue
+			}
+			err = HttpRequestResponse(&req, cfg, client)
+			if err != nil {
+				log.Printf("Error in http request: %v", err)
+				continue
+			}
+		}
+	}()
+
+	statusChan := client.SubscribeToStatus()
+	go func() {
+		for status := range statusChan {
+			log.Printf("Received status: %v\n", status)
+		}
+	}()
 
 	return server, nil
 }

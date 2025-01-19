@@ -19,9 +19,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error creating WebSocket server: %v", err)
 	}
+
 	defer wss.Close()
 
-	go wss.Client.ReceiveMessages()
 	httpServer := shared.NewHTTPServer(cfg, wss.Client)
 	log.Fatal(httpServer.Start())
 }

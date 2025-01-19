@@ -3,6 +3,7 @@ package shared
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -51,16 +52,16 @@ type HttpRequestMessage struct {
 	Method  string              `json:"method"`
 	URL     string              `json:"url"`
 	Headers map[string][]string `json:"headers"`
-	Body    string              `json:"body"`
+	Body    []byte              `json:"body"`
 }
 
 type HttpResponseMessage struct {
 	StatusCode int                 `json:"statusCode"`
 	Headers    map[string][]string `json:"headers"`
-	Body       string              `json:"body"`
+	Body       []byte              `json:"body"`
 }
 
-func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*HttpResponseMessage, error) {
+func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Config, wss *socketflow.WebSocketClient) error {
 	log.Printf("HttpRequestMessage: %v  %v bodylen=%v", requestParams.Method, requestParams.URL, len(requestParams.Body))
 
 	req := fasthttp.AcquireRequest()
@@ -75,7 +76,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 			req.Header.Add(key, v)
 		}
 	}
-	req.SetBodyString(requestParams.Body)
+	req.SetBodyRaw(requestParams.Body)
 
 	client := &fasthttp.Client{
 		ReadBufferSize:      16 * 1024,
@@ -87,7 +88,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 	if config.REQUEST_CA_FILE != "" {
 		caCert, err := os.ReadFile(config.REQUEST_CA_FILE)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(caCert)
@@ -98,18 +99,19 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 
 	err := client.DoRedirects(req, resp, 10)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var body string
+	var body []byte
 	if resp.Header.Peek("Content-Encoding") != nil && string(resp.Header.Peek("Content-Encoding")) == "gzip" {
 		bodyBytes, err := resp.BodyGunzip()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		body = string(bodyBytes)
+		body = bodyBytes
 	} else {
-		body = string(resp.Body())
+		body = resp.Body()
+		// resp.StreamBody
 	}
 
 	headers := make(map[string][]string)
@@ -117,11 +119,20 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
-	log.Printf("HttpResponseMessage, StatusCode=%v Method=%v URL=%v bodylen=%v", resp.StatusCode(), requestParams.Method, requestParams.URL, len(body))
-
-	return &HttpResponseMessage{
+	log.Printf("HttpResponseMessage, StatusCode=%v Method=%v URL=%v", resp.StatusCode(), requestParams.Method, requestParams.URL)
+	res := HttpResponseMessage{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,
 		Body:       body,
-	}, nil
+	}
+	payload, err := json.Marshal(res)
+	id, err := wss.SendMessage("response", payload)
+	if err != nil {
+		log.Printf("Error in send response: %v", err)
+		return err
+	}
+
+	fmt.Println("Sent response with ID:", id)
+
+	return nil
 }

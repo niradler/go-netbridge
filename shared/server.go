@@ -50,20 +50,11 @@ func NewWebSocketServer(hs *HTTPServer) {
 					log.Printf("Error parsing request message: %v", err)
 					continue
 				}
-				res, err := HttpRequest(&req, hs.config)
+				err = HttpRequestResponse(&req, hs.config, client)
 				if err != nil {
 					log.Printf("Error in http request: %v", err)
 					continue
 				}
-				payload, err := json.Marshal(res)
-				id, err := client.SendMessage("response", payload)
-				if err != nil {
-					log.Printf("Error in send response: %v", err)
-					continue
-				}
-
-				fmt.Println("Sent response with ID:", id)
-
 			}
 		}()
 
@@ -126,7 +117,7 @@ var IgnoredHeaders = map[string]struct{}{
 }
 
 func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
-
+	log.Printf("Received request: %s %s", r.Method, r.URL.String())
 	// Stream the request body in chunks
 	chunkSize := 1024 * 1024 // 1 MB chunks
 	buf := make([]byte, chunkSize)
@@ -163,7 +154,7 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		Method:  r.Method,
 		URL:     u.String(),
 		Headers: reqHeaders,
-		Body:    string(payload),
+		Body:    payload,
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
@@ -182,9 +173,7 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case responseMessage := <-hs.wss.Subscribe("response"):
-		// TODO: Handle chunked responses
 		log.Printf("Response message: %+v, %t", responseMessage.ID, responseMessage.IsChunk)
-		log.Printf("Response payload: %s", string(responseMessage.Payload))
 		var response HttpResponseMessage
 		err := json.Unmarshal(responseMessage.Payload, &response)
 		if err != nil {
@@ -199,7 +188,13 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(response.StatusCode)
-		w.Write([]byte(response.Body))
+
+		_, err = w.Write(response.Body)
+		if err != nil {
+			log.Printf("Error writing chunk to response: %v", err)
+			return
+		}
+		w.(http.Flusher).Flush() // Flush the response to the client
 	case <-r.Context().Done():
 		http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 	}

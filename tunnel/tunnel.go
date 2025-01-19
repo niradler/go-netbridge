@@ -27,7 +27,8 @@ func Create(w http.ResponseWriter, r *http.Request) (*socketflow.WebSocketClient
 		return nil, err
 	}
 	client := socketflow.NewWebSocketClient(conn, socketflow.Config{
-		ChunkSize: 1024,
+		ChunkSize:        1024,
+		ReassembleChunks: true,
 	})
 	return client, nil
 }
@@ -43,7 +44,8 @@ func Connect(url url.URL, config config.Config) (*socketflow.WebSocketClient, er
 		return nil, err
 	}
 	client := socketflow.NewWebSocketClient(conn, socketflow.Config{
-		ChunkSize: 1024,
+		ChunkSize:        1024, //TODO: chunk should be bigger
+		ReassembleChunks: true, // TODO: use chunk to stream body instead
 	})
 	return client, nil
 }
