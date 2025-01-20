@@ -1,13 +1,19 @@
 package shared
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"reflect"
+	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/niradler/go-netbridge/messages"
-	"github.com/niradler/go-netbridge/tunnel"
+	"github.com/niradler/go-netbridge/config"
+	"github.com/niradler/socketflow"
+	"github.com/valyala/fasthttp"
+	"go.uber.org/zap"
 )
 
 func PrintTypes(s interface{}) {
@@ -22,7 +28,7 @@ func PrintTypes(s interface{}) {
 	}
 }
 
-func ConvertHeaders(headers http.Header) map[string]string {
+func ConvertHeadersMulti(headers http.Header) map[string]string {
 	converted := make(map[string]string)
 	for key, values := range headers {
 		if len(values) > 0 {
@@ -32,20 +38,106 @@ func ConvertHeaders(headers http.Header) map[string]string {
 	return converted
 }
 
-func Ping(conn *websocket.Conn) error {
+func Ping(client *socketflow.WebSocketClient) error {
 	for i := 1; i <= 3; i++ {
-		err := tunnel.WriteJSON(conn, messages.Message{
-			Type:  messages.MessageType.Ping,
-			Total: 3,
-			Chunk: i,
-			Params: messages.PingMessage{
-				Body: "ping",
-			},
-		})
+		_, err := client.SendMessage("ping", []byte("ping"))
 		if err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
+type HttpRequestMessage struct {
+	Method  string              `json:"method"`
+	URL     string              `json:"url"`
+	Headers map[string][]string `json:"headers"`
+	Body    []byte              `json:"body"`
+}
+
+type HttpResponseMessage struct {
+	StatusCode int                 `json:"statusCode"`
+	Headers    map[string][]string `json:"headers"`
+	Body       []byte              `json:"body"`
+}
+
+func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Config, wss *socketflow.WebSocketClient) error {
+	logger := GetLogger()
+	logger.Info("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
+
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+
+	req.SetRequestURI(requestParams.URL)
+	req.Header.SetMethod(requestParams.Method)
+	for key, value := range requestParams.Headers {
+		for _, v := range value {
+			req.Header.Add(key, v)
+		}
+	}
+	req.SetBodyRaw(requestParams.Body)
+
+	client := &fasthttp.Client{
+		ReadBufferSize:      16 * 1024,
+		WriteBufferSize:     16 * 1024,
+		MaxConnDuration:     30 * time.Minute,
+		MaxIdleConnDuration: 60 * time.Second,
+	}
+
+	if config.REQUEST_CA_FILE != "" {
+		caCert, err := os.ReadFile(config.REQUEST_CA_FILE)
+		if err != nil {
+			return err
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		client.TLSConfig = &tls.Config{
+			RootCAs: caCertPool,
+		}
+	}
+
+	err := client.DoRedirects(req, resp, 10)
+	if err != nil {
+		return err
+	}
+
+	var body []byte
+	if resp.Header.Peek("Content-Encoding") != nil && string(resp.Header.Peek("Content-Encoding")) == "gzip" {
+		bodyBytes, err := resp.BodyGunzip()
+		if err != nil {
+			return err
+		}
+		body = bodyBytes
+	} else {
+		body = resp.Body()
+	}
+
+	headers := make(map[string][]string)
+	resp.Header.VisitAll(func(key, value []byte) {
+		headers[string(key)] = append(headers[string(key)], string(value))
+	})
+
+	logger.Info("HttpResponseMessage", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
+	res := HttpResponseMessage{
+		StatusCode: resp.StatusCode(),
+		Headers:    headers,
+		Body:       body,
+	}
+
+	payload, err := json.Marshal(res)
+	if err != nil {
+		logger.Error("Error marshaling response", zap.Error(err))
+		return err
+	}
+
+	id, err := wss.SendMessage("response", payload)
+	if err != nil {
+		logger.Error("Error in send response", zap.Error(err))
+		return err
+	}
+
+	logger.Info("Sent response", zap.String("ID", id))
 	return nil
 }

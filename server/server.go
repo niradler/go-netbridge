@@ -12,6 +12,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	shared.InitLogger(*cfg)
 	cfg.PORT = "8080"
 	cfg.Type = "server"
 	httpServer := shared.NewHTTPServer(cfg, nil)
