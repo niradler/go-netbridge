@@ -70,10 +70,20 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 			var req HttpRequestMessage
 			if err := json.Unmarshal(msg.Payload, &req); err != nil {
 				GetLogger().Error("Error parsing request message", zap.String("error", err.Error()))
+				SendResponseMessage(HttpResponseMessage{
+					StatusCode: http.StatusBadRequest,
+					Headers:    map[string][]string{},
+					Body:       []byte(err.Error()),
+				}, client)
 				continue
 			}
 			if err := HttpRequestResponse(&req, cfg, client); err != nil {
 				GetLogger().Error("Error in HTTP request", zap.String("error", err.Error()))
+				SendResponseMessage(HttpResponseMessage{
+					StatusCode: http.StatusBadRequest,
+					Headers:    map[string][]string{},
+					Body:       []byte(err.Error()),
+				}, client)
 			}
 		}
 	}()

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/niradler/go-netbridge/config"
@@ -67,7 +69,36 @@ type HttpResponse struct {
 	Body       []byte
 }
 
-func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*HttpResponse, error) {
+func RequestAllowed(requestParams *HttpRequestMessage, config *config.Config) error {
+	if len(config.WHITE_LIST) > 0 {
+		host, _ := ExtractHostname(requestParams.URL)
+		logger.Info("WHITE_LIST", zap.String("host", host))
+		allowed := false
+		for _, listed := range config.WHITE_LIST {
+			if strings.HasPrefix(host, listed) {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			return fmt.Errorf("Request not allowed for host: %s", host)
+
+		}
+
+	}
+	return nil
+}
+
+func ExtractHostname(urlStr string) (string, error) {
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return "", err
+	}
+	return parsedURL.Host, nil
+}
+
+func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*HttpResponseMessage, error) {
 	logger := GetLogger()
 	logger.Info("HttpRequest", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
@@ -134,7 +165,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 
 	logger.Debug("HttpResponse", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
 
-	return &HttpResponse{
+	return &HttpResponseMessage{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,
 		Body:       resp.Body(), // Streamed body
@@ -145,68 +176,22 @@ func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Confi
 	logger := GetLogger()
 	logger.Info("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
-
-	req.SetRequestURI(requestParams.URL)
-	req.Header.SetMethod(requestParams.Method)
-	for key, value := range requestParams.Headers {
-		for _, v := range value {
-			req.Header.Add(key, v)
-		}
-	}
-	req.SetBodyRaw(requestParams.Body)
-
-	client := &fasthttp.Client{
-		ReadBufferSize:      16 * 1024,
-		WriteBufferSize:     16 * 1024,
-		MaxConnDuration:     30 * time.Minute,
-		MaxIdleConnDuration: 60 * time.Second,
+	if err := RequestAllowed(requestParams, config); err != nil {
+		return err
 	}
 
-	if config.REQUEST_CA_FILE != "" {
-		caCert, err := os.ReadFile(config.REQUEST_CA_FILE)
-		if err != nil {
-			return err
-		}
-		caCertPool := x509.NewCertPool()
-		caCertPool.AppendCertsFromPEM(caCert)
-		client.TLSConfig = &tls.Config{
-			RootCAs: caCertPool,
-		}
-	}
-
-	err := client.DoRedirects(req, resp, 10)
+	res, err := HttpRequest(requestParams, config)
 	if err != nil {
 		return err
 	}
 
-	var body []byte
-	if resp.Header.Peek("Content-Encoding") != nil && string(resp.Header.Peek("Content-Encoding")) == "gzip" {
-		bodyBytes, err := resp.BodyGunzip()
-		if err != nil {
-			return err
-		}
-		body = bodyBytes
-	} else {
-		body = resp.Body()
-	}
+	return SendResponseMessage(*res, wss)
+}
 
-	headers := make(map[string][]string)
-	resp.Header.VisitAll(func(key, value []byte) {
-		headers[string(key)] = append(headers[string(key)], string(value))
-	})
+func SendResponseMessage(resMsg HttpResponseMessage, wss *socketflow.WebSocketClient) error {
+	logger.Debug("SendResponse", zap.Int("StatusCode", resMsg.StatusCode))
 
-	logger.Debug("HttpResponseMessage", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
-	res := HttpResponseMessage{
-		StatusCode: resp.StatusCode(),
-		Headers:    headers,
-		Body:       body,
-	}
-
-	payload, err := json.Marshal(res)
+	payload, err := json.Marshal(resMsg)
 	if err != nil {
 		logger.Error("Error marshaling response", zap.String("error", err.Error()))
 		return err

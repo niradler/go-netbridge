@@ -2,6 +2,7 @@ package shared
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -74,26 +75,6 @@ func NewWebSocketServer(hs *HTTPServer) {
 func NewHTTPServer(config *config.Config, wss *socketflow.WebSocketClient) *HTTPServer {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
-
-	if len(config.WHITE_LIST) > 0 {
-		router.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				allowed := false
-				for _, listed := range config.WHITE_LIST {
-					if strings.HasPrefix(r.RemoteAddr, listed) || strings.HasSuffix(r.Host, listed) {
-						allowed = true
-						break
-					}
-				}
-				if !allowed {
-					logger.Error("Blocked list", zap.String("remoteAddr", r.RemoteAddr), zap.String("host", r.Host))
-					http.Error(w, "Forbidden", http.StatusForbidden)
-					return
-				}
-				next.ServeHTTP(w, r)
-			})
-		})
-	}
 
 	if config.SECRET != "" && config.Type != "client" {
 		router.Use(func(next http.Handler) http.Handler {
@@ -265,12 +246,17 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	} else if proxyType == "proxy" {
 		hostUrl := url.URL{Scheme: r.Header.Get("X-Forwarded-Proto"), Host: r.Header.Get("X-Forwarded-Host"), Path: r.URL.Path, RawQuery: r.URL.RawQuery}
-		hs.proxyRequest(w, r, HttpRequestMessage{
+		reqMsg := HttpRequestMessage{
 			Method:  r.Method,
 			URL:     hostUrl.String(),
 			Headers: getReqHeaders(r.Header),
 			Body:    payload,
-		})
+		}
+		if err := RequestAllowed(&reqMsg, hs.config); err != nil {
+			http.Error(w, fmt.Sprintf("Request not allowed for host: %s", host), http.StatusForbidden)
+			return
+		}
+		hs.proxyRequest(w, r, reqMsg)
 	} else {
 		u := url.URL{Scheme: proto, Host: host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
 		reqMsg := HttpRequestMessage{
