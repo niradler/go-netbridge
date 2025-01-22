@@ -40,7 +40,7 @@ func NewWebSocketServer(hs *HTTPServer) {
 		statusChan := client.SubscribeToStatus()
 		go func() {
 			for status := range statusChan {
-				logger.Info("Received status", zap.Any("status", status))
+				logger.Debug("Received status", zap.Any("status", status))
 			}
 		}()
 
@@ -50,7 +50,7 @@ func NewWebSocketServer(hs *HTTPServer) {
 		go func() {
 			defer wg.Done()
 			for msg := range client.Subscribe("request") {
-				logger.Info("Received message", zap.String("message", string(msg.Payload)))
+				logger.Debug("Received message", zap.String("message", string(msg.Payload)))
 				var req HttpRequestMessage
 				err := json.Unmarshal(msg.Payload, &req)
 				if err != nil {
@@ -128,12 +128,12 @@ func NewHTTPServer(config *config.Config, wss *socketflow.WebSocketClient) *HTTP
 func (hs *HTTPServer) Start() error {
 	logger := GetLogger()
 	if hs.config.SSL_CERT_FILE != "" && hs.config.SSL_KEY_FILE != "" {
-		logger.Info("Starting HTTPS server", zap.String("port", hs.config.PORT))
+		logger.Debug("Starting HTTPS server", zap.String("port", hs.config.PORT))
 		return http.ListenAndServeTLS(":"+hs.config.PORT, hs.config.SSL_CERT_FILE, hs.config.SSL_KEY_FILE, hs.router)
 	}
 
 	logger.Info("Starting HTTP server", zap.String("port", hs.config.PORT))
-	return http.ListenAndServe("localhost:"+hs.config.PORT, hs.router)
+	return http.ListenAndServe(":"+hs.config.PORT, hs.router)
 }
 
 var IgnoredHeaders = map[string]struct{}{
@@ -151,7 +151,6 @@ var IgnoredHeaders = map[string]struct{}{
 	"Sec-WebSocket-Key":        {},
 	"Sec-WebSocket-Protocol":   {},
 	"Sec-WebSocket-Version":    {},
-	"Content-Encoding":         {},
 }
 
 func getResHeaders(headers http.Header) http.Header {
@@ -175,7 +174,7 @@ func getReqHeaders(headers http.Header) http.Header {
 }
 
 func (hs *HTTPServer) proxyRequest(w http.ResponseWriter, r *http.Request, req HttpRequestMessage) {
-	logger.Info("Received request", zap.String("method", r.Method), zap.String("url", r.URL.String()))
+	logger.Debug("Received request", zap.String("method", r.Method), zap.String("url", r.URL.String()))
 	res, err := HttpRequest(&req, hs.config)
 	if err != nil {
 		logger.Error("Error HttpRequest", zap.Error(err))
@@ -197,7 +196,7 @@ func (hs *HTTPServer) proxyRequest(w http.ResponseWriter, r *http.Request, req H
 }
 
 func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	logger.Info("Received request", zap.String("method", r.Method), zap.String("url", r.URL.String()))
+	logger.Debug("Received request", zap.String("method", r.Method), zap.String("url", r.URL.String()))
 
 	if hs == nil {
 		logger.Error("HTTPServer instance is nil")
@@ -243,7 +242,7 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("Proxy type", zap.String("type", proxyType), zap.String("proto", proto), zap.String("host", host))
+	logger.Debug("Proxy type", zap.String("type", proxyType), zap.String("proto", proto), zap.String("host", host))
 
 	if proxyType == "server" {
 		serverUrl, err := url.Parse(hs.config.SERVER_URL)
@@ -293,11 +292,11 @@ func (hs *HTTPServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to send message", http.StatusInternalServerError)
 			return
 		}
-		logger.Info("Sent message with ID", zap.String("id", id))
+		logger.Debug("Sent message with ID", zap.String("id", id))
 
 		select {
 		case responseMessage := <-hs.wss.Subscribe("response"):
-			logger.Info("Response message", zap.String("id", responseMessage.ID), zap.Bool("isChunk", responseMessage.IsChunk))
+			logger.Debug("Response message", zap.String("id", responseMessage.ID), zap.Bool("isChunk", responseMessage.IsChunk))
 			var response HttpResponseMessage
 			err := json.Unmarshal(responseMessage.Payload, &response)
 			if err != nil {

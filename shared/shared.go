@@ -69,7 +69,7 @@ type HttpResponse struct {
 
 func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*HttpResponse, error) {
 	logger := GetLogger()
-	logger.Info("HttpRequest", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
+	logger.Debug("HttpRequest", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -114,7 +114,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 	maxRetries := 2
 	var err error
 	for i := 0; i < maxRetries; i++ {
-		logger.Info("DoRedirects", zap.Int("attempt", i+1))
+		logger.Debug("DoRedirects", zap.Int("attempt", i+1))
 		err = client.DoRedirects(req, resp, 10)
 		if err == nil {
 			break // Success, exit retry loop
@@ -132,7 +132,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
-	logger.Info("HttpResponse", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
+	logger.Debug("HttpResponse", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
 
 	return &HttpResponse{
 		StatusCode: resp.StatusCode(),
@@ -143,7 +143,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 
 func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Config, wss *socketflow.WebSocketClient) error {
 	logger := GetLogger()
-	logger.Info("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
+	logger.Debug("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -199,7 +199,7 @@ func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Confi
 		headers[string(key)] = append(headers[string(key)], string(value))
 	})
 
-	logger.Info("HttpResponseMessage", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
+	logger.Debug("HttpResponseMessage", zap.Int("StatusCode", resp.StatusCode()), zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL))
 	res := HttpResponseMessage{
 		StatusCode: resp.StatusCode(),
 		Headers:    headers,
@@ -218,6 +218,6 @@ func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Confi
 		return err
 	}
 
-	logger.Info("Sent response", zap.String("ID", id))
+	logger.Debug("Sent response", zap.String("ID", id))
 	return nil
 }

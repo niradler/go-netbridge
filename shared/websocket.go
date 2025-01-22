@@ -81,7 +81,7 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 	statusChan := client.SubscribeToStatus()
 	go func() {
 		for status := range statusChan {
-			GetLogger().Info("Received status", zap.Any("status", status))
+			GetLogger().Debug("Received status", zap.Any("status", status))
 		}
 	}()
 
