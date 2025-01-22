@@ -9,8 +9,8 @@ import (
 
 func main() {
 	cfg, err := config.LoadConfig(&config.Config{
-		PORT: "8080",
-		Type: "server",
+		// PORT: "8080",
+		// Type: "server",
 	})
 	if err != nil {
 		log.Fatal(err)

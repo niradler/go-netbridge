@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 
 	"strings"
@@ -27,6 +28,16 @@ type Config struct {
 	WHITE_LIST           []string
 }
 
+func filterEmpty(slice []string) []string {
+	var result []string
+	for _, str := range slice {
+		if str != "" {
+			result = append(result, str)
+		}
+	}
+	return result
+}
+
 func LoadConfig(userConfig *Config) (*Config, error) {
 	godotenv.Load()
 
@@ -35,7 +46,7 @@ func LoadConfig(userConfig *Config) (*Config, error) {
 		X_Forwarded_Proto:    os.Getenv("X_FORWARDED_PROTO"),
 		PORT:                 os.Getenv("PORT"),
 		SSL_CERT_FILE:        os.Getenv("SSL_CERT_FILE"),
-		SSL_KEY_FILE:         os.Getenv("SSL_KEY_FILE"),
+		WHITE_LIST:           filterEmpty(strings.Split(os.Getenv("WHITE_LIST"), ",")),
 		REQUEST_CA_FILE:      os.Getenv("REQUEST_CA_FILE"),
 		INSECURE_SKIP_VERIFY: os.Getenv("INSECURE_SKIP_VERIFY") == "true",
 		LOG_LEVEL:            os.Getenv("LOG_LEVEL"),
@@ -45,7 +56,6 @@ func LoadConfig(userConfig *Config) (*Config, error) {
 		SERVER_URL:           os.Getenv("SERVER_URL"),
 		SOCKET_URL:           os.Getenv("SOCKET_URL"),
 		SECRET:               os.Getenv("SECRET"),
-		WHITE_LIST:           strings.Split(os.Getenv("WHITE_LIST"), ","),
 	}
 
 	mergeConfig := func(envValue, userValue string) string {
@@ -113,8 +123,10 @@ func LoadConfig(userConfig *Config) (*Config, error) {
 		config.PROXY_TYPE = "wss"
 	}
 
+	log.Println("Config loaded", config)
+
 	if config.SOCKET_URL == "" && config.Type == "client" {
-		panic("SERVER_URL is mandatory for client")
+		panic("SOCKET_URL is mandatory for client")
 	}
 
 	return config, nil

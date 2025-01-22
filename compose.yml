@@ -13,6 +13,7 @@ services:
       - netbridge
     environment:
       - PORT=8080
+      - TUNNEL_TYPE=server      
 
   client:
     container_name: client  
@@ -27,8 +28,9 @@ services:
     networks:
       - netbridge
     environment:
-      - SERVER_URL=ws://server:8080/ws
+      - SOCKET_URL=ws://server:8080/_ws
       - PORT=8081
+      - TUNNEL_TYPE=client
 
 networks:
   netbridge:

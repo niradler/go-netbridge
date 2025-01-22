@@ -72,7 +72,7 @@ type HttpResponse struct {
 func RequestAllowed(requestParams *HttpRequestMessage, config *config.Config) error {
 	if len(config.WHITE_LIST) > 0 {
 		host, _ := ExtractHostname(requestParams.URL)
-		logger.Info("WHITE_LIST", zap.String("host", host))
+		logger.Info("WHITE_LIST", zap.Any("white_list", config.WHITE_LIST), zap.String("host", host))
 		allowed := false
 		for _, listed := range config.WHITE_LIST {
 			if strings.HasPrefix(host, listed) {

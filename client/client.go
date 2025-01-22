@@ -9,10 +9,10 @@ import (
 
 func main() {
 	cfg, err := config.LoadConfig(&config.Config{
-		PORT:       "8081",
-		Type:       "client",
-		SOCKET_URL: "ws://localhost:8080/_ws",
-		SERVER_URL: "http://localhost:8080",
+		// PORT:       "8081",
+		// Type:       "client",
+		// SOCKET_URL: "ws://localhost:8080/_ws",
+		// SERVER_URL: "http://localhost:8080",
 	})
 	if err != nil {
 		log.Fatal(err)
