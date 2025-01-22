@@ -1,0 +1,33 @@
+# Ignore the .git directory
+.git
+
+# Ignore the node_modules directory
+node_modules
+
+# Ignore the Dockerfile and .dockerignore file
+Dockerfile
+Dockerfile.server
+.dockerignore
+
+# Ignore Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Ignore IDE and editor specific files
+.vscode
+.idea
+*.iml
+
+.env
+go-watch.config.yaml
+*.md

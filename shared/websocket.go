@@ -45,7 +45,7 @@ func (wss *WebSocketServer) SendMessage(msg socketflow.Message) error {
 }
 
 func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
-	wsURL, err := url.Parse(cfg.SERVER_URL)
+	wsURL, err := url.Parse(cfg.SOCKET_URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse WebSocket URL: %w", err)
 	}
@@ -69,11 +69,21 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 		for msg := range client.Subscribe("request") {
 			var req HttpRequestMessage
 			if err := json.Unmarshal(msg.Payload, &req); err != nil {
-				GetLogger().Error("Error parsing request message", zap.Error(err))
+				GetLogger().Error("Error parsing request message", zap.String("error", err.Error()))
+				SendResponseMessage(HttpResponseMessage{
+					StatusCode: http.StatusBadRequest,
+					Headers:    map[string][]string{},
+					Body:       []byte(err.Error()),
+				}, client)
 				continue
 			}
 			if err := HttpRequestResponse(&req, cfg, client); err != nil {
-				GetLogger().Error("Error in HTTP request", zap.Error(err))
+				GetLogger().Error("Error in HTTP request", zap.String("error", err.Error()))
+				SendResponseMessage(HttpResponseMessage{
+					StatusCode: http.StatusBadRequest,
+					Headers:    map[string][]string{},
+					Body:       []byte(err.Error()),
+				}, client)
 			}
 		}
 	}()
@@ -81,7 +91,7 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 	statusChan := client.SubscribeToStatus()
 	go func() {
 		for status := range statusChan {
-			GetLogger().Info("Received status", zap.Any("status", status))
+			GetLogger().Debug("Received status", zap.Any("status", status))
 		}
 	}()
 

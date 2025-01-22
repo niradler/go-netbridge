@@ -8,15 +8,18 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfig(&config.Config{
+		// PORT:       "8081",
+		// Type:       "client",
+		// SOCKET_URL: "ws://localhost:8080/_ws",
+		// SERVER_URL: "http://localhost:8080",
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	shared.InitLogger(*cfg)
 
-	cfg.PORT = "8081"
-	cfg.Type = "client"
 	wss, err := shared.NewWebSocketConnection(cfg)
 	if err != nil {
 		log.Fatalf("Error creating WebSocket server: %v", err)

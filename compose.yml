@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  server:
+    container_name: server
+    image: server
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.server
+    ports:
+      - "8080:8080"
+    networks:
+      - netbridge
+    environment:
+      - PORT=8080
+      - TUNNEL_TYPE=server      
+
+  client:
+    container_name: client  
+    image: client
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.client      
+    ports:
+      - "8081:8081"      
+    depends_on:
+      - server
+    networks:
+      - netbridge
+    environment:
+      - SOCKET_URL=ws://server:8080/_ws
+      - PORT=8081
+      - TUNNEL_TYPE=client
+
+networks:
+  netbridge:
