@@ -69,7 +69,7 @@ type HttpResponse struct {
 
 func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*HttpResponse, error) {
 	logger := GetLogger()
-	logger.Debug("HttpRequest", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
+	logger.Info("HttpRequest", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -143,7 +143,7 @@ func HttpRequest(requestParams *HttpRequestMessage, config *config.Config) (*Htt
 
 func HttpRequestResponse(requestParams *HttpRequestMessage, config *config.Config, wss *socketflow.WebSocketClient) error {
 	logger := GetLogger()
-	logger.Debug("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
+	logger.Info("HttpRequestMessage", zap.String("Method", requestParams.Method), zap.String("URL", requestParams.URL), zap.Int("BodyLen", len(requestParams.Body)))
 
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
