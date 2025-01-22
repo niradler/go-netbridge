@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/niradler/go-netbridge/config"
@@ -38,14 +39,23 @@ func Connect(url url.URL, config config.Config) (*socketflow.WebSocketClient, er
 	if config.SECRET != "" && config.Type == "client" {
 		headers.Add("Authorization", config.SECRET)
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(url.String(), headers)
-	if err != nil {
-		log.Printf("Failed to connect to WebSocket server: %v", err)
-		return nil, err
+
+	var client *socketflow.WebSocketClient
+	var err error
+	maxRetries := 3
+
+	for i := 0; i < maxRetries; i++ {
+		conn, _, err := websocket.DefaultDialer.Dial(url.String(), headers)
+		if err == nil {
+			client = socketflow.NewWebSocketClient(conn, socketflow.Config{
+				ChunkSize:        1024, //TODO: chunk should be bigger
+				ReassembleChunks: true, // TODO: use chunk to stream body instead
+			})
+			return client, nil
+		}
+		time.Sleep(1 * time.Second)
+		log.Printf("Failed to connect to WebSocket server (attempt %d/%d): %v", i+1, maxRetries, err)
 	}
-	client := socketflow.NewWebSocketClient(conn, socketflow.Config{
-		ChunkSize:        1024, //TODO: chunk should be bigger
-		ReassembleChunks: true, // TODO: use chunk to stream body instead
-	})
-	return client, nil
+
+	return nil, err
 }

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 
+	"strings"
+
 	"github.com/joho/godotenv"
 )
 
@@ -19,13 +21,16 @@ type Config struct {
 	LOG_FILE             string
 	Type                 string
 	SERVER_URL           string
+	SOCKET_URL           string
 	SECRET               string
+	PROXY_TYPE           string
+	WHITE_LIST           []string
 }
 
-func LoadConfig() (*Config, error) {
+func LoadConfig(userConfig *Config) (*Config, error) {
 	godotenv.Load()
 
-	config := &Config{
+	envConfig := Config{
 		X_Forwarded_Host:     os.Getenv("X_FORWARDED_HOST"),
 		X_Forwarded_Proto:    os.Getenv("X_FORWARDED_PROTO"),
 		PORT:                 os.Getenv("PORT"),
@@ -38,7 +43,58 @@ func LoadConfig() (*Config, error) {
 		LOG_FILE:             os.Getenv("LOG_FILE"),
 		Type:                 os.Getenv("TUNNEL_TYPE"),
 		SERVER_URL:           os.Getenv("SERVER_URL"),
+		SOCKET_URL:           os.Getenv("SOCKET_URL"),
 		SECRET:               os.Getenv("SECRET"),
+		WHITE_LIST:           strings.Split(os.Getenv("WHITE_LIST"), ","),
+	}
+
+	mergeConfig := func(envValue, userValue string) string {
+		if userValue != "" {
+			return userValue
+		}
+		return envValue
+	}
+
+	config := &Config{
+		X_Forwarded_Host:     envConfig.X_Forwarded_Host,
+		X_Forwarded_Proto:    envConfig.X_Forwarded_Proto,
+		PORT:                 envConfig.PORT,
+		SSL_CERT_FILE:        envConfig.SSL_CERT_FILE,
+		SSL_KEY_FILE:         envConfig.SSL_KEY_FILE,
+		REQUEST_CA_FILE:      envConfig.REQUEST_CA_FILE,
+		INSECURE_SKIP_VERIFY: envConfig.INSECURE_SKIP_VERIFY,
+		LOG_LEVEL:            envConfig.LOG_LEVEL,
+		LOG_JSON:             envConfig.LOG_JSON,
+		LOG_FILE:             envConfig.LOG_FILE,
+		Type:                 envConfig.Type,
+		SERVER_URL:           envConfig.SERVER_URL,
+		SOCKET_URL:           envConfig.SOCKET_URL,
+		SECRET:               envConfig.SECRET,
+		PROXY_TYPE:           envConfig.PROXY_TYPE,
+		WHITE_LIST:           envConfig.WHITE_LIST,
+	}
+
+	if userConfig != nil {
+		config.X_Forwarded_Host = mergeConfig(envConfig.X_Forwarded_Host, userConfig.X_Forwarded_Host)
+		config.X_Forwarded_Proto = mergeConfig(envConfig.X_Forwarded_Proto, userConfig.X_Forwarded_Proto)
+		config.PORT = mergeConfig(envConfig.PORT, userConfig.PORT)
+		config.SSL_CERT_FILE = mergeConfig(envConfig.SSL_CERT_FILE, userConfig.SSL_CERT_FILE)
+		config.SSL_KEY_FILE = mergeConfig(envConfig.SSL_KEY_FILE, userConfig.SSL_KEY_FILE)
+		config.REQUEST_CA_FILE = mergeConfig(envConfig.REQUEST_CA_FILE, userConfig.REQUEST_CA_FILE)
+		config.INSECURE_SKIP_VERIFY = userConfig.INSECURE_SKIP_VERIFY || envConfig.INSECURE_SKIP_VERIFY
+		config.LOG_LEVEL = mergeConfig(envConfig.LOG_LEVEL, userConfig.LOG_LEVEL)
+		config.LOG_JSON = userConfig.LOG_JSON || envConfig.LOG_JSON
+		config.LOG_FILE = mergeConfig(envConfig.LOG_FILE, userConfig.LOG_FILE)
+		config.Type = mergeConfig(envConfig.Type, userConfig.Type)
+		config.SERVER_URL = mergeConfig(envConfig.SERVER_URL, userConfig.SERVER_URL)
+		config.SOCKET_URL = mergeConfig(envConfig.SOCKET_URL, userConfig.SOCKET_URL)
+		config.SECRET = mergeConfig(envConfig.SECRET, userConfig.SECRET)
+		config.PROXY_TYPE = mergeConfig(envConfig.PROXY_TYPE, userConfig.PROXY_TYPE)
+		if len(userConfig.WHITE_LIST) > 0 {
+			config.WHITE_LIST = userConfig.WHITE_LIST
+		} else {
+			config.WHITE_LIST = envConfig.WHITE_LIST
+		}
 	}
 
 	if config.PORT == "" {
@@ -53,11 +109,11 @@ func LoadConfig() (*Config, error) {
 		config.Type = "client"
 	}
 
-	if config.SERVER_URL != "" && config.Type == "server" {
-		panic("SERVER_URL is only for client")
+	if config.PROXY_TYPE == "" {
+		config.PROXY_TYPE = "wss"
 	}
 
-	if config.SERVER_URL == "" && config.Type == "client" {
+	if config.SOCKET_URL == "" && config.Type == "client" {
 		panic("SERVER_URL is mandatory for client")
 	}
 

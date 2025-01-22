@@ -45,7 +45,7 @@ func (wss *WebSocketServer) SendMessage(msg socketflow.Message) error {
 }
 
 func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
-	wsURL, err := url.Parse(cfg.SERVER_URL)
+	wsURL, err := url.Parse(cfg.SOCKET_URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse WebSocket URL: %w", err)
 	}
@@ -69,11 +69,11 @@ func NewWebSocketConnection(cfg *config.Config) (*WebSocketServer, error) {
 		for msg := range client.Subscribe("request") {
 			var req HttpRequestMessage
 			if err := json.Unmarshal(msg.Payload, &req); err != nil {
-				GetLogger().Error("Error parsing request message", zap.Error(err))
+				GetLogger().Error("Error parsing request message", zap.String("error", err.Error()))
 				continue
 			}
 			if err := HttpRequestResponse(&req, cfg, client); err != nil {
-				GetLogger().Error("Error in HTTP request", zap.Error(err))
+				GetLogger().Error("Error in HTTP request", zap.String("error", err.Error()))
 			}
 		}
 	}()
