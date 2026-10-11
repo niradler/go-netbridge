@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"crypto/tls"
 	"log"
 	"net/http"
 	"net/url"
@@ -11,51 +12,63 @@ import (
 	"github.com/niradler/socketflow"
 )
 
-const maxMessageSize = 6 * 1024 * 1024 // 6 MB in bytes
+const maxMessageSize = 4 << 20
 
-var Upgrader = websocket.Upgrader{
-	ReadBufferSize:  maxMessageSize,
-	WriteBufferSize: maxMessageSize,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
-func Create(w http.ResponseWriter, r *http.Request) (*socketflow.WebSocketClient, error) {
-	conn, err := Upgrader.Upgrade(w, r, nil)
+func Create(w http.ResponseWriter, r *http.Request, cfg config.Config) (*socketflow.WebSocketClient, error) {
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  32 * 1024,
+		WriteBufferSize: 32 * 1024,
+		CheckOrigin: func(request *http.Request) bool {
+			origin := request.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			for _, allowed := range cfg.ALLOWED_ORIGINS {
+				if origin == allowed {
+					return true
+				}
+			}
+			return false
+		},
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Error upgrading connection:", err)
 		return nil, err
 	}
-	client := socketflow.NewWebSocketClient(conn, socketflow.Config{
-		ChunkSize:        1024,
+	conn.SetReadLimit(maxMessageSize)
+	return socketflow.NewWebSocketClient(conn, socketflow.Config{
+		ChunkSize:        1 << 20,
 		ReassembleChunks: true,
-	})
-	return client, nil
+	}), nil
 }
 
-func Connect(url url.URL, config config.Config) (*socketflow.WebSocketClient, error) {
+func Connect(cfg *config.Config) (*socketflow.WebSocketClient, error) {
+	parsed, err := url.Parse(cfg.SOCKET_URL)
+	if err != nil {
+		return nil, err
+	}
 	headers := http.Header{}
-	if config.SECRET != "" && config.Type == "client" {
-		headers.Add("Authorization", config.SECRET)
+	headers.Set("X-Auth-Secret", cfg.SECRET)
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: cfg.INSECURE_SKIP_VERIFY,
+		},
 	}
-
-	var client *socketflow.WebSocketClient
-	var err error
-	maxRetries := 3
-
-	for i := 0; i < maxRetries; i++ {
-		conn, _, err := websocket.DefaultDialer.Dial(url.String(), headers)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		conn, _, err := dialer.Dial(parsed.String(), headers)
 		if err == nil {
-			client = socketflow.NewWebSocketClient(conn, socketflow.Config{
-				ChunkSize:        1024, //TODO: chunk should be bigger
-				ReassembleChunks: true, // TODO: use chunk to stream body instead
-			})
-			return client, nil
+			conn.SetReadLimit(maxMessageSize)
+			return socketflow.NewWebSocketClient(conn, socketflow.Config{
+				ChunkSize:        1 << 20,
+				ReassembleChunks: true,
+			}), nil
 		}
-		time.Sleep(1 * time.Second)
-		log.Printf("Failed to connect to WebSocket server (attempt %d/%d): %v", i+1, maxRetries, err)
+		lastErr = err
+		log.Printf("websocket connect attempt %d failed", attempt)
+		time.Sleep(time.Second)
 	}
-
-	return nil, err
+	return nil, lastErr
 }

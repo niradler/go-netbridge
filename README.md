@@ -77,7 +77,7 @@ func main() {
 
 ## Configuration
 
-The configuration is managed through a configuration file. Ensure that the configuration file is correctly set up with the necessary parameters such as `SERVER_URL`, `X_Forwarded_Proto`, and `X_Forwarded_Host`.
+Configuration comes from environment variables. `SECRET` is required and must be at least 16 characters. The tunnel listens on `127.0.0.1` unless `BIND_ADDR` is set. Outbound requests are allowed only when the host exactly matches `WHITE_LIST` or the host of `SERVER_URL`. Client-supplied `X-Forwarded-Host` is ignored unless `TRUST_FORWARDED=true`. Copy `.env.example` to `.env` before `docker compose up`.
 
 
 ## Roadmap
