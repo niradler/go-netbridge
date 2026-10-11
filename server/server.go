@@ -8,19 +8,12 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig(&config.Config{
-		// PORT: "8080",
-		// Type: "server",
-	})
+	cfg, err := config.LoadConfig(&config.Config{Type: "server"})
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	shared.InitLogger(*cfg)
-
-	httpServer := shared.NewHTTPServer(cfg, nil)
-
-	shared.NewWebSocketServer(httpServer)
-
-	log.Fatal(httpServer.Start())
+	server := shared.NewHTTPServer(cfg, nil)
+	shared.MountWebSocket(server)
+	log.Fatal(server.Start())
 }
